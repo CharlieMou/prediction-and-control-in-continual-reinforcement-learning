@@ -3,6 +3,7 @@ import pickle
 import itertools
 import torch
 import torch.optim as optim
+import wandb
 
 from wrappers import *
 from model import *
@@ -74,6 +75,17 @@ filename = "DQN_gamma_"+misc_param['gamma']+\
 		"_steps_"+str(args.t_steps)+"_batch_"+str(args.batch_size)+\
 		"_lr1_"+str(args.lr1)+"_seed_"+str(args.seed)+"_ftype_"+args.ftype
 
+reward_smoothing_window = 10000
+algorithm_name = "DQN"
+wandb.init(
+	project="JBW_testbed",
+	name=filename,
+	group=algorithm_name,
+	config={**vars(args), "algorithm": algorithm_name,
+			"gamma": gamma, "epsilon": epsilon,
+			"reward_smoothing_window": reward_smoothing_window}
+)
+
 Net = NN_FA(env.feature_space.shape[0]*env.feature_space.shape[1], env.action_space.n).to(device)
 opt = optim.Adam(Net.parameters(), lr=args.lr1)
 criterion = torch.nn.MSELoss()
@@ -90,11 +102,20 @@ env.feature_space.seed(args.seed)
 
 cs = env.reset()
 loss_list = []
+reward_window_sum = 0.0
 for step in range(args.t_steps):
 	#env.render()				
 	_, c_action = get_action(cs)
 	ns, rew, done, _ = env.step(c_action)
 	rewards_array[step] = rew
+	reward_window_sum += rew
+	if step >= reward_smoothing_window:
+		reward_window_sum -= rewards_array[step-reward_smoothing_window]
+	smoothed_reward = rew / reward_smoothing_window if step < reward_smoothing_window - 1 \
+			else reward_window_sum / reward_smoothing_window
+	wandb.log({
+		"reward_per_step_10000": smoothed_reward
+	}, step=step)
 	exp_replay.store(cs, c_action, ns, rew)
 	
 	if exp_replay.size() >= args.batch_size:
@@ -117,3 +138,5 @@ if args.plot:
 if args.save:
 	with open("results/"+filename+"_returns.pkl", "wb") as f:
 		pickle.dump(rewards_array, f)
+
+wandb.finish()

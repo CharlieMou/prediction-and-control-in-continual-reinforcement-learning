@@ -16,7 +16,7 @@ class CNN(nn.Module):
 
 	def forward(self, x):
 		x = F.relu(self.conv(x))
-		x = F.relu(self.fc_hidden(x.view(x.size(0), -1)))
+		x = F.relu(self.fc_hidden(x.reshape(x.size(0), -1)))
 		return self.output(x)
 
 class CNN_three_heads(nn.Module):
@@ -35,7 +35,7 @@ class CNN_three_heads(nn.Module):
 
 	def forward(self, x):
 		x = F.relu(self.conv(x))
-		x = F.relu(self.fc_hidden(x.view(x.size(0), -1)))
+		x = F.relu(self.fc_hidden(x.reshape(x.size(0), -1)))
 		return self.output_1(x), self.output_2(x), self.output_3(x)
 
 class CNN_half(nn.Module):
@@ -52,5 +52,5 @@ class CNN_half(nn.Module):
 
 	def forward(self, x):
 		x = F.relu(self.conv(x))
-		x = F.relu(self.fc_hidden(x.view(x.size(0), -1)))
+		x = F.relu(self.fc_hidden(x.reshape(x.size(0), -1)))
 		return self.output(x)

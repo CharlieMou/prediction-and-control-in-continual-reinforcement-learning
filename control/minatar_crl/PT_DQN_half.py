@@ -4,29 +4,58 @@ import itertools
 import torch
 import torch.optim as optim
 import copy
+import wandb
 
 from model import *
 from replay import *
-from CL_envs import *
+from CL_envs_fixed import *
+from diagnostics import ContinualDiagnostics
 
 from argparse import ArgumentParser
 from configparser import ConfigParser
 
-parser = ArgumentParser(description="Parameters for the code - ARTD on gym envs")
+
+class CombinedQNetwork(torch.nn.Module):
+	"""Expose the PT decomposition as the behavior Q-function Q = P + T."""
+
+	def __init__(self, permanent_net, transient_net):
+		super().__init__()
+		self.permanent_net = permanent_net
+		self.transient_net = transient_net
+
+	def forward(self, inputs):
+		return self.permanent_net(inputs) + self.transient_net(inputs)
+
+
+parser = ArgumentParser(description="Parameters for the code - PT-DQN")
 parser.add_argument('--seed', type=int, default=0, help="Random seed")
 parser.add_argument('--env-name', type=str, default="all", help="Environment Name")
-parser.add_argument('--t-steps', type=int, default=50000000, help="total number of steps")
-parser.add_argument('--switch', type=int, default=5000000, help="switch env steps")
+parser.add_argument('--t-steps', type=int, default=4500000, help="total number of steps")
+parser.add_argument('--switch', type=int, default=500000, help="switch env steps")
 parser.add_argument('--lr1', type=float, default=0.1, help="learning rate for weights")
 parser.add_argument('--lr2', type=float, default=0.1, help="learning rate for transient values")
 parser.add_argument('--update', type=int, default=50000, help="PM update frequency")
 parser.add_argument('--decay', type=float, default=0, help="decay transient weights after transfer")
 parser.add_argument('--batch-size', type=int, default=64, help="Number of samples per batch")
+parser.add_argument('--eval-frequency', type=int, default=50000, help="diagnostic evaluation frequency")
+parser.add_argument('--eval-episodes', type=int, default=5, help="episodes per evaluation task")
+parser.add_argument('--eval-max-steps', type=int, default=10000, help="maximum evaluation episode length")
+parser.add_argument('--eval-epsilon', type=float, default=0.001, help="near-greedy evaluation epsilon")
 parser.add_argument('--save', action="store_true")
 parser.add_argument('--plot', action="store_true")
 parser.add_argument('--save-model', action="store_true")
 
 args = parser.parse_args()
+if args.t_steps != NUM_TASK_STAGES * args.switch:
+	raise ValueError("t-steps must equal switch * 9 for the fixed three-cycle curriculum")
+if args.update <= args.batch_size:
+	raise ValueError("update must be greater than batch-size")
+if args.eval_frequency <= 0 or args.eval_episodes <= 0 or args.eval_max_steps <= 0:
+	raise ValueError("evaluation parameters must be positive")
+if args.switch % args.eval_frequency != 0:
+	raise ValueError("eval-frequency must divide switch to evaluate every task boundary")
+if not 0 <= args.eval_epsilon <= 1:
+	raise ValueError("eval-epsilon must be in [0, 1]")
 config = ConfigParser()
 config.read('misc_params.cfg')
 misc_param = config[str(args.env_name)]
@@ -72,9 +101,8 @@ def get_action(c_obs):
 	c_obs = np.moveaxis(c_obs, 2, 0)
 	c_obs = torch.tensor(c_obs, dtype=torch.float).to(device)
 	with torch.no_grad():
-		curr_T_vals = T_Net(c_obs.unsqueeze(0))
 		curr_P_vals = P_Net(c_obs.unsqueeze(0))
-		curr_Q_vals = curr_T_vals + curr_P_vals
+		curr_Q_vals = curr_P_vals + T_Net(c_obs.unsqueeze(0))
 	if np.random.random() <= epsilon:
 		action = env.action_space.sample()
 	else:
@@ -93,7 +121,20 @@ filename = "PT_DQN_0.5x"+"_env_name_"+str(args.env_name)+"_gamma_"+misc_param['g
 		"_steps_"+str(args.t_steps)+"_switch_"+str(args.switch)+"_update_"+str(args.update)+"_decay_"+str(args.decay)+\
 		"_lr1_"+str(args.lr1)+"_lr2_"+str(args.lr2)+"_batch_"+str(args.batch_size)+"_seed_"+str(args.seed)
 
-env = CL_envs_func(args.env_name, args.seed)
+return_smoothing_window = 10000
+algorithm_name = "PT-DQN"
+wandb.init(
+	project="MinAtar_testbed",
+	name=filename,
+	group=algorithm_name,
+	config={**vars(args), "algorithm": algorithm_name,
+			"task_sequence": list(TASK_SEQUENCE),
+			"gamma": gamma, "epsilon": epsilon,
+			"return_smoothing_window": return_smoothing_window}
+)
+
+task_index = 0
+env = CL_envs_func(args.env_name, args.seed, task_index)
 in_channels = env.observation_space.shape[2]
 num_actions = env.action_space.n
 
@@ -108,8 +149,12 @@ P_criterion = torch.nn.MSELoss()
 Target_net = CNN_half(in_channels, num_actions).to(device)
 Target_net.load_state_dict(T_Net.state_dict())
 
+Net = CombinedQNetwork(P_Net, T_Net)
+
 exp_replay = expReplay(batch_size=args.batch_size, device=device)
 exp_replay_PM = expReplay_PM(max_size=args.update, batch_size=args.batch_size, device=device)
+diagnostics = ContinualDiagnostics(args.seed, gamma, args.eval_episodes,
+		args.eval_max_steps, args.eval_epsilon)
 
 returns_array = np.zeros(args.t_steps)
 
@@ -117,13 +162,18 @@ avg_return = 0
 epi_return = 0
 done = False
 cs = env.reset()
+return_window_sum = 0.0
 
 for step in range(args.t_steps):
+	wandb_metrics = {}
 	
-	if (step+1)%args.switch == 0:
-		env = CL_envs_func(args.env_name, args.seed)
+	if step > 0 and step%args.switch == 0:
+		task_index += 1
+		env = CL_envs_func(args.env_name, args.seed, task_index)
 		cs = env.reset()
+		avg_return = 0
 		epi_return = 0
+		diagnostics.start_training_phase()
 
 	val_p, c_action = get_action(cs)
 	ns, rew, done, _ = env.step(c_action)
@@ -143,6 +193,9 @@ for step in range(args.t_steps):
 
 	if (step+1)%1000 == 0:
 		Target_net.load_state_dict(T_Net.state_dict())
+		wandb_metrics.update(diagnostics.action_gap_metrics(
+			Net, exp_replay, device, env.game_name
+		))
 
 	if done:
 		cs = env.reset()
@@ -150,6 +203,20 @@ for step in range(args.t_steps):
 		epi_return = 0
 
 	returns_array[step] = copy.copy(avg_return)
+	return_window_sum += returns_array[step]
+	if step >= return_smoothing_window:
+		return_window_sum -= returns_array[step-return_smoothing_window]
+	smoothed_return = returns_array[step] / return_smoothing_window \
+			if step < return_smoothing_window - 1 \
+			else return_window_sum / return_smoothing_window
+	if (step+1)%args.eval_frequency == 0:
+		completed_stages = (step+1)//args.switch
+		wandb_metrics.update(diagnostics.evaluation_metrics(
+			Net, device, completed_stages
+		))
+	wandb_metrics.update({"episodic_return_10000": smoothed_return,
+			"task_index": task_index})
+	wandb.log(wandb_metrics, step=step)
 
 if args.save_model:
 	torch.save(Net.state_dict(), "models/"+filename+"_Net"+".pt")
@@ -162,3 +229,5 @@ if args.plot:
 if args.save:
 	with open("results/"+filename+"_returns.pkl", "wb") as f:
 		pickle.dump(returns_array, f)
+
+wandb.finish()
