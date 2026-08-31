@@ -4,6 +4,7 @@ import itertools
 import torch
 import torch.optim as optim
 import copy
+import random
 import wandb
 
 from model import *
@@ -15,77 +16,59 @@ from argparse import ArgumentParser
 from configparser import ConfigParser
 
 
-class ImplicitPlasticityLayer(torch.nn.Module):
-	"""Mean expansion with reduced plasticity in historical action-gap directions."""
+def str2bool(value):
+	if isinstance(value, bool):
+		return value
+	if value.lower() in ('true', '1', 'yes'):
+		return True
+	if value.lower() in ('false', '0', 'no'):
+		return False
+	raise ValueError("align must be true or false")
 
-	def __init__(self, num_actions, k, plasticity, rank=1):
-		super().__init__()
-		if k < 0:
-			raise ValueError("k must be non-negative")
-		if not 0 < plasticity <= 1:
-			raise ValueError("lambda must be in (0, 1]")
-		if not 0 <= rank <= num_actions - 1:
-			raise ValueError("rank must be between 0 and num_actions - 1")
-		self.k = k
-		self.plasticity = plasticity
-		self.rank = rank
-		self.register_buffer('gap_covariance', torch.zeros(num_actions, num_actions))
-		self.register_buffer('protected_projector', torch.zeros(num_actions, num_actions))
-		self.register_buffer('num_gap_samples', torch.zeros(()))
 
-	def forward(self, inputs):
-		mean_component = inputs.mean(dim=-1, keepdim=True)
-		protected_component = inputs @ self.protected_projector
-		return inputs + self.k * mean_component + \
-				(self.plasticity - 1) * protected_component
+class RetrospectiveRevaluation:
+	"""Fixed-size reservoir of retrospectively revalued decisions."""
 
-	@torch.no_grad()
-	def update_statistics(self, q_values):
-		"""Accumulate top-1 versus top-2 action-gap directions."""
-		top_actions = q_values.topk(2, dim=-1).indices
-		gap_directions = torch.zeros_like(q_values)
-		gap_directions.scatter_(1, top_actions[:, :1], 1 / np.sqrt(2))
-		gap_directions.scatter_(1, top_actions[:, 1:2], -1 / np.sqrt(2))
-		batch_size = q_values.shape[0]
-		batch_covariance = gap_directions.T @ gap_directions / batch_size
-		total = self.num_gap_samples + batch_size
-		self.gap_covariance.mul_(self.num_gap_samples / total)
-		self.gap_covariance.add_(batch_covariance * (batch_size / total))
-		self.num_gap_samples.copy_(total)
+	def __init__(self, max_size, batch_size, device):
+		self.memory = []
+		self.max_size = max_size
+		self.batch_size = batch_size
+		self.device = device
+		self.num_seen = 0
 
-	@torch.no_grad()
-	def consolidate(self):
-		"""Refresh the protected top-r historical action-gap subspace."""
-		old_transform = self.transform_matrix()
-		if self.rank == 0 or self.num_gap_samples.item() == 0:
-			self.protected_projector.zero_()
+	def store(self, state, action, margin):
+		revalued_decision = (state.cpu(), action.cpu(), margin.cpu())
+		self.num_seen += 1
+		if len(self.memory) < self.max_size:
+			self.memory.append(revalued_decision)
 		else:
-			_, eigenvectors = torch.linalg.eigh(self.gap_covariance)
-			basis = eigenvectors[:, -self.rank:]
-			self.protected_projector.copy_(basis @ basis.T)
-		return old_transform, self.transform_matrix()
+			index = random.randrange(self.num_seen)
+			if index < self.max_size:
+				self.memory[index] = revalued_decision
 
-	def transform_matrix(self):
-		num_actions = self.protected_projector.shape[0]
-		identity = torch.eye(num_actions, device=self.protected_projector.device)
-		mean_projector = torch.ones_like(self.protected_projector) / num_actions
-		return identity + self.k * mean_projector + \
-				(self.plasticity - 1) * self.protected_projector
+	def sample(self):
+		batch = random.sample(self.memory, min(len(self.memory), self.batch_size))
+		states, actions, margins = map(torch.stack, zip(*batch))
+		return (states.to(self.device), actions.to(self.device),
+				margins.to(self.device))
+
+	def size(self):
+		return len(self.memory)
 
 
-parser = ArgumentParser(description="Parameters for the code - IP-DQN(k, lambda)")
+parser = ArgumentParser(description="Parameters for the code - DQN-GAC")
 parser.add_argument('--seed', type=int, default=0, help="Random seed")
 parser.add_argument('--env-name', type=str, default="all", help="Environment Name")
 parser.add_argument('--t-steps', type=int, default=4500000, help="total number of steps")
 parser.add_argument('--switch', type=int, default=500000, help="switch env steps")
 parser.add_argument('--lr1', type=float, default=0.1, help="learning rate for DQN")
 parser.add_argument('--batch-size', type=int, default=64, help="Number of samples per batch")
-parser.add_argument('--k', type=float, default=6.0,
-				help="mean-expansion coefficient (default: number of MinAtar actions)")
-parser.add_argument('--plasticity', '--lambda', dest='plasticity', type=float, default=0.9,
-				help="scale for protected action-gap directions")
-parser.add_argument('--rank', type=int, default=1,
-				help="number of historical action-gap directions to protect")
+parser.add_argument('--revaluation-size', type=int, default=10000,
+				help="maximum number of retrospectively revalued decisions")
+parser.add_argument('--rho', type=float, default=0.5,
+				help="fraction of each historical action gap to preserve")
+parser.add_argument('--align', type=str2bool, default=True,
+				help="require online/target greedy-action agreement (true or false)")
 parser.add_argument('--eval-frequency', type=int, default=50000, help="diagnostic evaluation frequency")
 parser.add_argument('--eval-episodes', type=int, default=5, help="episodes per evaluation task")
 parser.add_argument('--eval-max-steps', type=int, default=10000, help="maximum evaluation episode length")
@@ -95,10 +78,12 @@ parser.add_argument('--plot', action="store_true")
 parser.add_argument('--save-model', action="store_true")
 
 args = parser.parse_args()
-if args.switch <= 0:
-	raise ValueError("switch must be positive")
 if args.t_steps != NUM_TASK_STAGES * args.switch:
 	raise ValueError("t-steps must equal switch * 9 for the fixed three-cycle curriculum")
+if args.revaluation_size <= 0:
+	raise ValueError("revaluation-size must be positive")
+if not 0 <= args.rho <= 1:
+	raise ValueError("rho must be in [0, 1]")
 if args.eval_frequency <= 0 or args.eval_episodes <= 0 or args.eval_max_steps <= 0:
 	raise ValueError("evaluation parameters must be positive")
 if args.switch % args.eval_frequency != 0:
@@ -117,27 +102,45 @@ def train_Net():
 	with torch.no_grad():
 		next_pred = Target_net(next_states)
 		next_pred = next_pred.max(1)[0]
-		Net[1].update_statistics(Target_net(states))
 	pred = Net(states)
 	pred = pred.gather(1, actions)
 	targets = rewards + (1 - done) * gamma * next_pred.reshape(-1, 1)
-	loss = criterion(pred, targets)
+	td_loss = criterion(pred, targets)
+	gac_loss = torch.zeros((), device=device)
+	if retrospective_revaluation.size() > 0:
+		revalued_states, revalued_actions, margins = retrospective_revaluation.sample()
+		revalued_q = Net(revalued_states)
+		greedy_q = revalued_q.gather(1, revalued_actions)
+		competitor_q = revalued_q.scatter(1, revalued_actions, -torch.inf).max(
+				dim=1, keepdim=True)[0]
+		gac_loss = torch.relu(competitor_q - greedy_q + args.rho * margins).mean()
+	loss = td_loss + gac_loss
 	opt.zero_grad()
 	loss.backward()
 	opt.step()
-	return loss.item()
+	return loss.item(), td_loss.item(), gac_loss.item()
 
 
 @torch.no_grad()
-def consolidate_policy_subspace():
-	"""Change geometry without changing the Q-function at consolidation time."""
-	old_transform, new_transform = Net[1].consolidate()
-	remapping = torch.linalg.solve(new_transform, old_transform)
-	output_layer = Net[0].output
-	output_layer.weight.copy_(remapping @ output_layer.weight)
-	output_layer.bias.copy_(remapping @ output_layer.bias)
-	opt.state.pop(output_layer.weight, None)
-	opt.state.pop(output_layer.bias, None)
+def revalue():
+	"""Retrospectively revalue replay states into historical decisions."""
+	for start in range(0, exp_replay.size(), args.batch_size):
+		batch = list(itertools.islice(
+			exp_replay.memory, start, start + args.batch_size))
+		states = torch.stack([transition[0] for transition in batch]).to(device)
+		online_q = Net(states)
+		online_top = online_q.topk(2, dim=1)
+		actions = online_top.indices[:, :1]
+		margins = online_top.values[:, :1] - online_top.values[:, 1:2]
+		keep = torch.ones(states.shape[0], dtype=torch.bool, device=device)
+		if args.align:
+			target_q = Target_net(states)
+			target_top = target_q.topk(2, dim=1)
+			keep = actions.squeeze(1) == target_top.indices[:, 0]
+			target_margins = target_top.values[:, :1] - target_top.values[:, 1:2]
+			margins = torch.minimum(margins, target_margins)
+		for state, action, margin in zip(states[keep], actions[keep], margins[keep]):
+			retrospective_revaluation.store(state, action, margin)
 
 
 def get_action(c_obs):
@@ -160,14 +163,14 @@ torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 random.seed(args.seed)
 
-filename = "IP_DQN_k_"+str(args.k)+"_lambda_"+str(args.plasticity)+\
+filename = "DQN_GAC_rho_"+str(args.rho)+"_align_"+str(args.align)+\
 		"_env_name_"+args.env_name+"_gamma_"+misc_param['gamma']+\
 		"_steps_"+str(args.t_steps)+"_switch_"+str(args.switch)+\
-		"_rank_"+str(args.rank)+"_batch_"+str(args.batch_size)+\
+		"_revaluation_"+str(args.revaluation_size)+"_batch_"+str(args.batch_size)+\
 		"_lr1_"+str(args.lr1)+"_seed_"+str(args.seed)
 
 return_smoothing_window = 10000
-algorithm_name = "IP-DQN"
+algorithm_name = "DQN-GAC"
 wandb.init(
 	project="MinAtar_testbed",
 	name=filename,
@@ -183,20 +186,16 @@ env = CL_envs_func(args.env_name, args.seed, task_index)
 in_channels = env.observation_space.shape[2]
 num_actions = env.action_space.n
 
-Net = torch.nn.Sequential(
-	CNN(in_channels, num_actions),
-	ImplicitPlasticityLayer(num_actions, args.k, args.plasticity, args.rank)
-).to(device)
+Net = CNN(in_channels, num_actions).to(device)
 opt = optim.Adam(Net.parameters(), lr=args.lr1)
 criterion = torch.nn.MSELoss()
 
-Target_net = torch.nn.Sequential(
-	CNN(in_channels, num_actions),
-	ImplicitPlasticityLayer(num_actions, args.k, args.plasticity, args.rank)
-).to(device)
+Target_net = CNN(in_channels, num_actions).to(device)
 Target_net.load_state_dict(Net.state_dict())
 
 exp_replay = expReplay(batch_size=args.batch_size, device=device)
+retrospective_revaluation = RetrospectiveRevaluation(
+		args.revaluation_size, args.batch_size, device)
 diagnostics = ContinualDiagnostics(args.seed, gamma, args.eval_episodes,
 		args.eval_max_steps, args.eval_epsilon)
 
@@ -212,7 +211,6 @@ for step in range(args.t_steps):
 	wandb_metrics = {}
 
 	if step > 0 and step%args.switch == 0:
-		consolidate_policy_subspace()
 		task_index += 1
 		env = CL_envs_func(args.env_name, args.seed, task_index)
 		cs = env.reset()
@@ -226,9 +224,14 @@ for step in range(args.t_steps):
 	exp_replay.store(cs, c_action, ns, rew, done)
 
 	if exp_replay.size() >= args.batch_size:
-		loss = train_Net()
+		loss, td_loss, gac_loss = train_Net()
 
 	cs = ns
+
+	# Consolidate before the coincident target update so --align compares the
+	# final online policy with a genuinely lagged target policy.
+	if (step+1)%args.switch == 0 and step+1 < args.t_steps:
+		revalue()
 
 	if (step+1)%1000 == 0:
 		Target_net.load_state_dict(Net.state_dict())
@@ -254,7 +257,11 @@ for step in range(args.t_steps):
 			Net, device, completed_stages
 		))
 	wandb_metrics.update({"episodic_return_10000": smoothed_return,
-			"task_index": task_index})
+			"task_index": task_index,
+			"gac/revaluation_size": retrospective_revaluation.size()})
+	if exp_replay.size() >= args.batch_size:
+		wandb_metrics.update({"loss/total": loss, "loss/td": td_loss,
+				"loss/gac": gac_loss})
 	wandb.log(wandb_metrics, step=step)
 
 if args.save_model:

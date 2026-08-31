@@ -16,21 +16,18 @@ pids=()
 labels=()
 for gpu in "${!seeds[@]}"; do
 	seed="${seeds[$gpu]}"
-	label="dqn_fame_seed_${seed}_gpu_${gpu}"
-	echo "Launching FAME, seed=${seed}, GPU=${gpu}"
-	CUDA_VISIBLE_DEVICES="$gpu" python dqn_fame.py \
+	label="dqn_gac_seed_${seed}_gpu_${gpu}"
+	echo "Launching DQN-GAC, seed=${seed}, GPU=${gpu}"
+	CUDA_VISIBLE_DEVICES="$gpu" python dqn_gac.py \
 		--env-name all \
 		--seed "$seed" \
 		--t-steps "$t_steps" \
 		--switch "$switch_steps" \
 		--batch-size "$batch_size" \
-		--lr1 1e-3 \
-		--lr2 1e-5 \
-		--size-fast2meta 12000 \
-		--detection-step 1200 \
-		--epoch-meta 200 \
-		--warmstep 50000 \
-		--lambda-reg 1.0 \
+		--lr1 1e-5 \
+		--rho 0.5 \
+		--align true \
+		--revaluation-size 10000 \
 		--save >"logs/${label}.log" 2>&1 &
 	pids+=("$!")
 	labels+=("$label")
