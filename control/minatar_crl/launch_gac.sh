@@ -26,7 +26,7 @@ for gpu in "${!seeds[@]}"; do
 		--batch-size "$batch_size" \
 		--lr1 1e-5 \
 		--rho 0.5 \
-		--align true \
+		--align false \
 		--revaluation-size 10000 \
 		--save >"logs/${label}.log" 2>&1 &
 	pids+=("$!")
