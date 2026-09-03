@@ -5,7 +5,8 @@ set -uo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-seeds=(16 32 48)
+seeds=(18 34 50)
+gpu=3
 t_steps=10000000
 batch_size=32
 revalue_period=50000
@@ -14,8 +15,7 @@ mkdir -p logs
 
 pids=()
 labels=()
-for gpu in "${!seeds[@]}"; do
-	seed="${seeds[$gpu]}"
+for seed in "${seeds[@]}"; do
 	label="dqn_gac_seed_${seed}_gpu_${gpu}"
 	echo "Launching DQN-GAC, seed=${seed}, GPU=${gpu}"
 	CUDA_VISIBLE_DEVICES="$gpu" python dqn_gac.py \

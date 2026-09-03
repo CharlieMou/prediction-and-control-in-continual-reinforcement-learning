@@ -5,7 +5,8 @@ set -uo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-seeds=(16 32 48)
+# seeds=(16 32 48)
+seeds=(20 36 52)
 t_steps=10000000
 batch_size=32
 
@@ -26,7 +27,7 @@ launch() {
 		--seed "$seed" \
 		--t-steps "$t_steps" \
 		--batch-size "$batch_size" \
-		--aperture-size 13 \
+		--aperture-size 9 \
 		--reward-period 500000 \
 		--replay-size 1000 \
 		--minimum-replay-history 50 \
