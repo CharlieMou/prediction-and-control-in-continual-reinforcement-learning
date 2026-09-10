@@ -9,6 +9,7 @@ seeds=(16 32 48)
 t_steps=9000000
 switch_steps=1000000
 batch_size=64
+lambda_gac=1.0
 
 mkdir -p logs
 
@@ -25,6 +26,7 @@ for gpu in "${!seeds[@]}"; do
 		--switch "$switch_steps" \
 		--batch-size "$batch_size" \
 		--lr1 1e-5 \
+		--lambda-gac "$lambda_gac" \
 		--rho 0.5 \
 		--align false \
 		--revaluation-size 10000 \
