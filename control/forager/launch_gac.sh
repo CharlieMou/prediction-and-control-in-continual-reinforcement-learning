@@ -5,7 +5,7 @@ set -uo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-seeds=(18 34 50)
+seeds=(20 36 52)
 gpu=3
 t_steps=10000000
 batch_size=32
@@ -31,6 +31,7 @@ for seed in "${seeds[@]}"; do
 		--target-update-frequency 128 \
 		--revalue-period "$revalue_period" \
 		--revalue-samples "$batch_size" \
+		--gac-weight 10 \
 		--rho 0.5 \
 		--align true \
 		--save >"logs/${label}.log" 2>&1 &

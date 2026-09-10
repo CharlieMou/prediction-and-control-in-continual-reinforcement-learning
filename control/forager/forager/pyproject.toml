@@ -1,0 +1,36 @@
+[project]
+name = "ForagerEnv"
+version = "0.0.0"
+description = ""
+authors = [
+    {name = "Andy Patterson", email = "andnpatterson@gmail.com"},
+]
+dependencies = [
+    "numpy>=1.21.0",
+    "numba>=0.57.0",
+]
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "MIT"}
+
+[project.optional-dependencies]
+dev = [
+    "pip",
+    "mypy",
+    "ruff",
+    "pytest>=7.3.1",
+    "pytest-benchmark>=4.0.0",
+    "commitizen>=3.2.2",
+    "pre-commit>=3.3.2",
+]
+
+
+[tool]
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.0.0"
+tag_format = "$version"
+version_files = ["pyproject.toml"]
+
+[tool.ruff.lint]
+ignore = []
