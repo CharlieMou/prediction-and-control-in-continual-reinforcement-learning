@@ -67,6 +67,8 @@ parser.add_argument('--revaluation-size', type=int, default=10000,
 				help="maximum number of retrospectively revalued decisions")
 parser.add_argument('--rho', type=float, default=0.5,
 				help="fraction of each historical action gap to preserve")
+parser.add_argument('--lambda-gac', type=float, default=1.0,
+				help="GAC loss coefficient")
 parser.add_argument('--align', type=str2bool, default=True,
 				help="require online/target greedy-action agreement (true or false)")
 parser.add_argument('--eval-frequency', type=int, default=50000, help="diagnostic evaluation frequency")
@@ -84,6 +86,8 @@ if args.revaluation_size <= 0:
 	raise ValueError("revaluation-size must be positive")
 if not 0 <= args.rho <= 1:
 	raise ValueError("rho must be in [0, 1]")
+if args.lambda_gac < 0:
+	raise ValueError("lambda-gac must be non-negative")
 if args.eval_frequency <= 0 or args.eval_episodes <= 0 or args.eval_max_steps <= 0:
 	raise ValueError("evaluation parameters must be positive")
 if args.switch % args.eval_frequency != 0:
@@ -114,7 +118,7 @@ def train_Net():
 		competitor_q = revalued_q.scatter(1, revalued_actions, -torch.inf).max(
 				dim=1, keepdim=True)[0]
 		gac_loss = torch.relu(competitor_q - greedy_q + args.rho * margins).mean()
-	loss = td_loss + gac_loss
+	loss = td_loss + args.lambda_gac * gac_loss
 	opt.zero_grad()
 	loss.backward()
 	opt.step()
@@ -163,7 +167,8 @@ torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 random.seed(args.seed)
 
-filename = "DQN_GAC_rho_"+str(args.rho)+"_align_"+str(args.align)+\
+filename = "DQN_GAC_lambda_"+str(args.lambda_gac)+"_rho_"+str(args.rho)+\
+		"_align_"+str(args.align)+\
 		"_env_name_"+args.env_name+"_gamma_"+misc_param['gamma']+\
 		"_steps_"+str(args.t_steps)+"_switch_"+str(args.switch)+\
 		"_revaluation_"+str(args.revaluation_size)+"_batch_"+str(args.batch_size)+\
