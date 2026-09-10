@@ -28,7 +28,7 @@ for gpu in "${!seeds[@]}"; do
 		--lr1 1e-5 \
 		--lambda-gac "$lambda_gac" \
 		--rho 0.5 \
-		--align false \
+		--align True \
 		--revaluation-size 10000 \
 		--save >"logs/${label}.log" 2>&1 &
 	pids+=("$!")
