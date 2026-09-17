@@ -12,9 +12,9 @@ streaming_online="${2:-false}"
 t_steps=9000000
 switch_steps=1000000
 refresh_period=50000
-refresh_size=10000
+refresh_size=25000
 batch_size=64
-lambda_gac=1.0
+lambda_gac=0.01
 
 mkdir -p logs
 

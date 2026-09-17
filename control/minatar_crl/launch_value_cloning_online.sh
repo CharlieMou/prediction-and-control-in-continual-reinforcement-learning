@@ -12,7 +12,7 @@ streaming_online="${2:-false}"
 t_steps=9000000
 switch_steps=1000000
 refresh_period=50000
-refresh_size=10000
+refresh_size=25000
 batch_size=64
 
 mkdir -p logs
@@ -32,7 +32,7 @@ for seed in "${seeds[@]}"; do
 		--refresh_size "$refresh_size" \
 		--batch-size "$batch_size" \
 		--lr1 1e-5 \
-		--lambda-vc 1.0 \
+		--lambda-vc 0.01 \
 		--value-memory-size 10000 \
 		--save >"logs/${label}.log" 2>&1 &
 	pids+=("$!")

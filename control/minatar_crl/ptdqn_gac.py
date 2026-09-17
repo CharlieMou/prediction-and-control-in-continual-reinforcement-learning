@@ -204,7 +204,7 @@ torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 random.seed(args.seed)
 
-filename = "PT_DQN_GAC_0.5x_rho_"+str(args.rho)+"_align_"+str(args.align)+\
+filename = "PT_DQN_GAC_DoneRight_0.5x_rho_"+str(args.rho)+"_align_"+str(args.align)+\
 		"_env_name_"+str(args.env_name)+"_gamma_"+misc_param['gamma']+\
 		"_steps_"+str(args.t_steps)+"_switch_"+str(args.switch)+\
 		"_update_"+str(args.update)+"_decay_"+str(args.decay)+\
@@ -277,13 +277,13 @@ for step in range(args.t_steps):
 
 	cs = ns
 
+	if (step+1)%args.switch == 0 and step+1 < args.t_steps:
+		revalue()
+
 	if (step+1)%args.update == 0:
 		p_loss = train_P_Net()
 		for params in T_Net.parameters():
 			params.data *= args.decay
-
-	if (step+1)%args.switch == 0 and step+1 < args.t_steps:
-		revalue()
 
 	if (step+1)%1000 == 0:
 		Target_net.load_state_dict(T_Net.state_dict())

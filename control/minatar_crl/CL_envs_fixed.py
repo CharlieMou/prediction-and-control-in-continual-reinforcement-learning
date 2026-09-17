@@ -1,9 +1,9 @@
 from gym_wrapper import BaseEnv
 
 
-TASK_SEQUENCE = ("breakout", "space_invaders", "freeway")
+# TASK_SEQUENCE = ("breakout", "space_invaders", "freeway")
 # TASK_SEQUENCE = ("freeway", "breakout", "space_invaders")
-# TASK_SEQUENCE = ("space_invaders，"freeway", "breakout")
+TASK_SEQUENCE = ("space_invaders","freeway", "breakout")
 NUM_CYCLES = 3
 NUM_TASK_STAGES = len(TASK_SEQUENCE) * NUM_CYCLES
 

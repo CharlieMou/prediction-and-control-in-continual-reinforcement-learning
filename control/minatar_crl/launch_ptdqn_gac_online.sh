@@ -15,14 +15,15 @@ update_steps=50000
 refresh_period=50000
 refresh_size=10000
 batch_size=64
+lambda_gac=1.0
 
 mkdir -p logs
 
 pids=()
 labels=()
 for seed in "${seeds[@]}"; do
-	label="ptdqn_gac_online_streaming_${streaming_online}_seed_${seed}_gpu_${gpu}"
-	echo "Launching online PT-DQN-GAC, streaming=${streaming_online}, seed=${seed}, GPU=${gpu}"
+	label="ptdqn_gac_online_lambda_${lambda_gac}_streaming_${streaming_online}_seed_${seed}_gpu_${gpu}"
+	echo "Launching online PT-DQN-GAC, lambda=${lambda_gac}, streaming=${streaming_online}, seed=${seed}, GPU=${gpu}"
 	CUDA_VISIBLE_DEVICES="$gpu" python ptdqn_gac_online.py \
 		--env-name all \
 		--seed "$seed" \
@@ -37,7 +38,8 @@ for seed in "${seeds[@]}"; do
 		--refresh_period "$refresh_period" \
 		--refresh_size "$refresh_size" \
 		--rho 0.5 \
-		--align false \
+		--lambda-gac "$lambda_gac" \
+		--align True \
 		--revaluation-size 10000 \
 		--save >"logs/${label}.log" 2>&1 &
 	pids+=("$!")

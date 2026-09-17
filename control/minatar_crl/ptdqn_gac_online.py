@@ -90,6 +90,8 @@ parser.add_argument('--revaluation-size', type=int, default=10000,
 				help="maximum number of retrospectively revalued decisions")
 parser.add_argument('--rho', type=float, default=0.5,
 				help="fraction of each historical action gap to preserve")
+parser.add_argument('--lambda-gac', type=float, default=1.0,
+				help="GAC loss coefficient")
 parser.add_argument('--align', type=str2bool, default=True,
 				help="require online/target greedy-action agreement (true or false)")
 parser.add_argument('--eval-frequency', type=int, default=50000, help="diagnostic evaluation frequency")
@@ -115,6 +117,8 @@ if args.revaluation_size <= 0:
 	raise ValueError("revaluation-size must be positive")
 if not 0 <= args.rho <= 1:
 	raise ValueError("rho must be in [0, 1]")
+if args.lambda_gac < 0:
+	raise ValueError("lambda-gac must be non-negative")
 if args.eval_frequency <= 0 or args.eval_episodes <= 0 or args.eval_max_steps <= 0:
 	raise ValueError("evaluation parameters must be positive")
 if args.switch % args.eval_frequency != 0:
@@ -147,7 +151,7 @@ def train_T_Net():
 		competitor_q = revalued_q.scatter(1, revalued_actions, -torch.inf).max(
 				dim=1, keepdim=True)[0]
 		gac_loss = torch.relu(competitor_q - greedy_q + args.rho * margins).mean()
-	loss = td_loss + gac_loss
+	loss = td_loss + args.lambda_gac * gac_loss
 	T_opt.zero_grad()
 	loss.backward()
 	T_opt.step()
@@ -223,7 +227,8 @@ torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 random.seed(args.seed)
 
-filename = "PT_DQN_GAC_online_0.5x_rho_"+str(args.rho)+"_align_"+str(args.align)+\
+filename = "PT_DQN_GAC_online_0.5x_lambda_"+str(args.lambda_gac)+\
+		"_rho_"+str(args.rho)+"_align_"+str(args.align)+\
 		"_env_name_"+str(args.env_name)+"_gamma_"+misc_param['gamma']+\
 		"_steps_"+str(args.t_steps)+"_switch_"+str(args.switch)+\
 		"_update_"+str(args.update)+"_decay_"+str(args.decay)+\
@@ -301,18 +306,18 @@ for step in range(args.t_steps):
 
 	cs = ns
 
-	if (step+1)%args.update == 0:
-		p_loss = train_P_Net()
-		for params in T_Net.parameters():
-			params.data *= args.decay
-
 	if args.streaming_online and training_states is not None:
 		revalue(training_states)
 	elif (not args.streaming_online
 			and (step+1)%args.refresh_period == 0
 			and exp_replay.size() >= args.batch_size):
-		# Equality validation keeps this refresh aligned with PM transfer/decay.
+		# Revalue the combined Q-function before PM transfer/transient decay.
 		revalue(sample_refresh_states())
+
+	if (step+1)%args.update == 0:
+		p_loss = train_P_Net()
+		for params in T_Net.parameters():
+			params.data *= args.decay
 
 	if (step+1)%1000 == 0:
 		Target_net.load_state_dict(T_Net.state_dict())
