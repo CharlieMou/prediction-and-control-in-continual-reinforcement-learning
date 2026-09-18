@@ -5,7 +5,6 @@ set -uo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-# 原配置：所有实验均在 GPU 3 上运行
 gpu=3
 # gpus=(0 1 2)
 seeds=(20 36 52)
@@ -17,7 +16,6 @@ mkdir -p logs
 
 pids=()
 labels=()
-# 原配置：所有 seed 共用同一块 GPU
 for seed in "${seeds[@]}"; do
 # for launch_index in "${!seeds[@]}"; do
 	# seed="${seeds[$launch_index]}"

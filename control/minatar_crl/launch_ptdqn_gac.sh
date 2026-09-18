@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: ./launch_ptdqn_gac.sh [gpu=0]
 
 set -uo pipefail
 
@@ -6,6 +7,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
 seeds=(16 32 48)
+gpu="${1:-0}"
 t_steps=9000000
 switch_steps=1000000
 batch_size=64
@@ -14,8 +16,7 @@ mkdir -p logs
 
 pids=()
 labels=()
-for gpu in "${!seeds[@]}"; do
-	seed="${seeds[$gpu]}"
+for seed in "${seeds[@]}"; do
 	label="ptdqn_gac_seed_${seed}_gpu_${gpu}"
 	echo "Launching PT-DQN-GAC, seed=${seed}, GPU=${gpu}"
 	CUDA_VISIBLE_DEVICES="$gpu" python ptdqn_gac.py \
@@ -29,7 +30,7 @@ for gpu in "${!seeds[@]}"; do
 		--update 50000 \
 		--decay 0.75 \
 		--rho 0.5 \
-		--align false \
+		--align true \
 		--revaluation-size 10000 \
 		--save >"logs/${label}.log" 2>&1 &
 	pids+=("$!")

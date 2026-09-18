@@ -14,7 +14,7 @@ switch_steps=1000000
 refresh_period=50000
 refresh_size=10000
 batch_size=64
-lambda_gac=1.0
+lambda_gac=0.05
 
 mkdir -p logs
 

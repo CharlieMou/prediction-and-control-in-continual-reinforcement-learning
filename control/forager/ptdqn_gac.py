@@ -274,7 +274,7 @@ def get_action(obs):
 
 algorithm_name = "PT-DQN w/ GAC"
 filename = (
-	f"PT_DQN_GAC_Forager_steps_{args.t_steps}_reward_period_{args.reward_period}"
+	f"PT_DQN_GAC_DoneRight_Forager_steps_{args.t_steps}_reward_period_{args.reward_period}"
 	f"_fov_{args.aperture_size}_revalue_period_{args.revalue_period}"
 	f"_rho_{args.rho}_align_{args.align}_gac_memory_{args.revaluation_size}"
 	f"_update_{args.update}_decay_{args.decay}_lrP_{args.lr1}_lrT_{args.lr2}"
@@ -318,13 +318,8 @@ for step in range(args.t_steps):
 		last_losses = train_t_net()
 		gradient_updates += 1
 
-	if (step + 1) % args.update == 0:
-		last_p_loss = train_p_net()
-		with torch.no_grad():
-			for parameter in T_Net.parameters():
-				parameter.mul_(args.decay)
-
-	# This schedule is deliberately independent of Forager's reward period.
+	# Revalue before the permanent update/transient decay so GAC stores the
+	# pre-PT greedy decisions and action gaps.
 	if (
 		args.revalue_period > 0
 		and step + 1 >= args.revalue_start
@@ -333,6 +328,12 @@ for step in range(args.t_steps):
 	):
 		last_revaluation = revalue()
 		revaluation_events += 1
+
+	if (step + 1) % args.update == 0:
+		last_p_loss = train_p_net()
+		with torch.no_grad():
+			for parameter in T_Net.parameters():
+				parameter.mul_(args.decay)
 
 	# Revalue first when target refresh and revaluation happen on the same step,
 	# preserving the lagged transient-target agreement check.

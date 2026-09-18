@@ -32,7 +32,7 @@ for seed in "${seeds[@]}"; do
 		--refresh_size "$refresh_size" \
 		--batch-size "$batch_size" \
 		--lr1 1e-5 \
-		--lambda-vc 1.0 \
+		--lambda-vc 0.05 \
 		--value-memory-size 10000 \
 		--save >"logs/${label}.log" 2>&1 &
 	pids+=("$!")
