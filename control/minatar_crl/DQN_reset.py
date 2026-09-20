@@ -17,7 +17,7 @@ from configparser import ConfigParser
 parser = ArgumentParser(description="Parameters for the code - DQN reset")
 parser.add_argument('--seed', type=int, default=0, help="Random seed")
 parser.add_argument('--env-name', type=str, default="all", help="Environment Name")
-parser.add_argument('--t-steps', type=int, default=4500000, help="total number of steps")
+parser.add_argument('--t-steps', type=int, default=NUM_TASK_STAGES * 500000, help="total number of steps")
 parser.add_argument('--switch', type=int, default=500000, help="switch env steps")
 parser.add_argument('--lr1', type=float, default=0.1, help="learning rate for DQN")
 parser.add_argument('--batch-size', type=int, default=64, help="Number of samples per batch")
@@ -30,8 +30,8 @@ parser.add_argument('--plot', action="store_true")
 parser.add_argument('--save-model', action="store_true")
 
 args = parser.parse_args()
-if args.t_steps != len(TASK_SEQUENCE) * args.switch:
-	raise ValueError("t-steps must equal switch * len(TASK_SEQUENCE)")
+if args.t_steps != NUM_TASK_STAGES * args.switch:
+	raise ValueError("t-steps must equal switch * NUM_TASK_STAGES")
 if args.eval_frequency <= 0 or args.eval_episodes <= 0 or args.eval_max_steps <= 0:
 	raise ValueError("evaluation parameters must be positive")
 if args.switch % args.eval_frequency != 0:

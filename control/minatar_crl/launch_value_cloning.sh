@@ -9,7 +9,7 @@
 #
 # gpu=0
 # seeds=(16 32 48)
-# t_steps=9000000
+# t_steps=$(python -c 'from CL_envs_fixed import NUM_TASK_STAGES; print(NUM_TASK_STAGES * 1_000_000)')
 # switch_steps=1000000
 # batch_size=64
 # lambda_vc=1.0
@@ -48,19 +48,19 @@
 #
 # exit "$status"
 
-# Version 2: launch one seed on each of three GPUs (enabled).
+# Version 2: launch all three seeds on the specified GPU (enabled).
 
 set -uo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-gpus=(0 1 2)
+gpu=2
 seeds=(16 32 48)
-t_steps=9000000
+t_steps=$(python -c 'from CL_envs_fixed import NUM_TASK_STAGES; print(NUM_TASK_STAGES * 1_000_000)')
 switch_steps=1000000
 batch_size=64
-lambda_vc=0.1
+lambda_vc=1
 value_memory_size=10000
 
 mkdir -p logs
@@ -68,7 +68,6 @@ mkdir -p logs
 pids=()
 labels=()
 for index in "${!seeds[@]}"; do
-	gpu="${gpus[$index]}"
 	seed="${seeds[$index]}"
 	label="DQN_value_cloning_seed_${seed}_gpu_${gpu}"
 	echo "Launching DQN Value Cloning, seed=${seed}, GPU=${gpu}"
