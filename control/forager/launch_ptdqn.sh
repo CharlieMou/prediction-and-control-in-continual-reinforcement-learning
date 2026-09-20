@@ -6,7 +6,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
 gpu=3
-seeds=(18 34 50)
+seeds=(20 36 52)
 t_steps=10000000
 batch_size=32
 
@@ -27,8 +27,8 @@ for seed in "${seeds[@]}"; do
 		--minimum-replay-history 50 \
 		--update-frequency 4 \
 		--target-update-frequency 128 \
-		--lr1 1e-8 \
-		--lr2 1e-3 \
+		--lr1 3e-8 \
+		--lr2 3e-4 \
 		--update 10000 \
 		--decay 0.95 \
 		--save >"logs/${label}.log" 2>&1 &
