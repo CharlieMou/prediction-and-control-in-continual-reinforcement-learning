@@ -61,7 +61,7 @@ class RetrospectiveRevaluation:
 parser = ArgumentParser(description="Parameters for the code - online DQN-GAC")
 parser.add_argument('--seed', type=int, default=0, help="Random seed")
 parser.add_argument('--env-name', type=str, default="all", help="Environment Name")
-parser.add_argument('--t-steps', type=int, default=4500000, help="total number of steps")
+parser.add_argument('--t-steps', type=int, default=NUM_TASK_STAGES * 500000, help="total number of steps")
 parser.add_argument('--switch', type=int, default=500000, help="switch env steps")
 parser.add_argument('--lr1', type=float, default=0.1, help="learning rate for DQN")
 parser.add_argument('--streaming-online', '--streaming_online', type=str2bool,
@@ -89,7 +89,7 @@ parser.add_argument('--save-model', action="store_true")
 
 args = parser.parse_args()
 if args.t_steps != NUM_TASK_STAGES * args.switch:
-	raise ValueError("t-steps must equal switch * 9 for the fixed three-cycle curriculum")
+	raise ValueError("t-steps must equal switch * NUM_TASK_STAGES")
 if args.refresh_period <= 0:
 	raise ValueError("refresh-period must be positive")
 if args.refresh_size <= 0:

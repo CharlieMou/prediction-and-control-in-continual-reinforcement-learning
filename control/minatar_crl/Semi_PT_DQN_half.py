@@ -30,7 +30,7 @@ class CombinedQNetwork(torch.nn.Module):
 parser = ArgumentParser(description="Parameters for the code - Semi PT-DQN")
 parser.add_argument('--seed', type=int, default=0, help="Random seed")
 parser.add_argument('--env-name', type=str, default="all", help="Environment Name")
-parser.add_argument('--t-steps', type=int, default=4500000, help="total number of steps")
+parser.add_argument('--t-steps', type=int, default=NUM_TASK_STAGES * 500000, help="total number of steps")
 parser.add_argument('--switch', type=int, default=500000, help="switch env steps")
 parser.add_argument('--lr1', type=float, default=3e-6, help="learning rate for weights")
 parser.add_argument('--lr2', type=float, default=1e-4, help="learning rate for transient values")
@@ -48,7 +48,7 @@ parser.add_argument('--save-model', action="store_true")
 
 args = parser.parse_args()
 if args.t_steps != NUM_TASK_STAGES * args.switch:
-	raise ValueError("t-steps must equal switch * 9 for the fixed three-cycle curriculum")
+	raise ValueError("t-steps must equal switch * NUM_TASK_STAGES")
 if args.update <= args.batch_size:
 	raise ValueError("update must be greater than batch-size")
 if args.decay != 0:
@@ -136,7 +136,7 @@ filename = "Semi_PT_DQN_0.5x"+"_env_name_"+str(args.env_name)+"_gamma_"+misc_par
 		"_lr1_"+str(args.lr1)+"_lr2_"+str(args.lr2)+"_batch_"+str(args.batch_size)+"_seed_"+str(args.seed)
 
 return_smoothing_window = 10000
-algorithm_name = "semi PT-DQN"
+algorithm_name = "Semi PT-DQN"
 wandb.init(
 	project="MinAtar_testbed",
 	name=filename,

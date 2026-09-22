@@ -50,7 +50,7 @@ class MetaReplay:
 parser = ArgumentParser(description="DQN w/ MLE for the fixed MinAtar curriculum")
 parser.add_argument('--seed', type=int, default=0, help="Random seed")
 parser.add_argument('--env-name', type=str, default="all", help="Environment Name")
-parser.add_argument('--t-steps', type=int, default=4500000, help="total number of steps")
+parser.add_argument('--t-steps', type=int, default=NUM_TASK_STAGES * 500000, help="total number of steps")
 parser.add_argument('--switch', type=int, default=500000, help="switch env steps")
 parser.add_argument('--lr1', type=float, default=1e-3, help="learning rate for meta learner")
 parser.add_argument('--lr2', type=float, default=1e-5, help="learning rate for fast learner")
@@ -82,7 +82,7 @@ parser.add_argument('--save-model', action="store_true")
 
 args = parser.parse_args()
 if args.t_steps != NUM_TASK_STAGES * args.switch:
-	raise ValueError("t-steps must equal switch * 9 for the fixed three-cycle curriculum")
+	raise ValueError("t-steps must equal switch * NUM_TASK_STAGES")
 if min(args.batch_size, args.size_fast2meta, args.size_meta, args.detection_step,
 		args.epoch_meta, args.warmstep) <= 0:
 	raise ValueError("buffer, detection, epoch, warm-up, and batch parameters must be positive")
