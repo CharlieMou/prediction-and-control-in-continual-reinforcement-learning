@@ -1,7 +1,7 @@
 # TASK_SEQUENCE = ("breakout", "space_invaders", "freeway")
 # TASK_SEQUENCE = ("freeway", "breakout", "space_invaders")
 # TASK_SEQUENCE = ("space_invaders","freeway", "breakout")
-TASK_SEQUENCE = ("seaquest", "asterix")
+TASK_SEQUENCE = ("seaquest", "asterix", "space_invaders")
 NUM_CYCLES = 4 if TASK_SEQUENCE == ("seaquest", "asterix") else 3
 NUM_TASK_STAGES = len(TASK_SEQUENCE) * NUM_CYCLES
 
