@@ -1,0 +1,7 @@
+# Procgen 0.10.7 publishes wheels for Python <= 3.10.
+# gym==0.23.0
+gym3==0.3.3
+#numpy==1.26.0
+procgen==0.10.7
+# torch>=1.13
+# wandb>=0.15
