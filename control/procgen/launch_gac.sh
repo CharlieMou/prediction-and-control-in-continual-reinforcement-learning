@@ -13,7 +13,7 @@ envs="${ENVS:-coinrun,starpilot,caveflyer,dodgeball,fruitbot,miner}"
 IFS=',' read -ra selected_envs <<< "$envs"
 num_tasks="${NUM_TASKS:-${#selected_envs[@]}}"
 cycles="${CYCLES:-3}"
-switch_steps="${SWITCH_STEPS:-25000000}"
+switch_steps="${SWITCH_STEPS:-4000000}"
 replay_size="${REPLAY_SIZE:-1000000}"
 # Defaults mirror launch_value_cloning.sh for a controlled comparison. The
 # Value Cloning environment-variable names are accepted as shared overrides.

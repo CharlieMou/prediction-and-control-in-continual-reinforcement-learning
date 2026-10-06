@@ -81,7 +81,7 @@ def add_common_arguments(parser):
 	parser.add_argument("--cycles", type=int, default=3)
 	parser.add_argument(
 		"--switch-steps", "--switch", dest="switch_steps", type=int,
-		default=25_000_000, help="environment transitions per task stage",
+		default=4_000_000, help="environment transitions per task stage",
 	)
 	parser.add_argument(
 		"--t-steps", type=int, default=0,
@@ -118,7 +118,10 @@ def add_common_arguments(parser):
 	parser.add_argument("--gradient-clip", type=float, default=10.0)
 	parser.add_argument("--initial-epsilon", type=float, default=1.0)
 	parser.add_argument("--final-epsilon", type=float, default=0.1)
-	parser.add_argument("--epsilon-decay-steps", type=int, default=512_000)
+	parser.add_argument(
+		"--epsilon-decay-steps", type=int, default=None,
+		help="exploration decay duration; default: 10%% of each task stage",
+	)
 	epsilon_group = parser.add_mutually_exclusive_group()
 	epsilon_group.add_argument(
 		"--epsilon-reset-on-switch", dest="epsilon_reset_on_switch",
@@ -176,6 +179,13 @@ def resolve_and_validate(args):
 
 	if args.cycles <= 0 or args.switch_steps <= 0:
 		raise ValueError("--cycles and --switch-steps must be positive")
+	if args.num_envs <= 0:
+		raise ValueError("--num-envs must be positive")
+	if args.epsilon_decay_steps is None:
+		decay_steps = max(args.num_envs, int(0.1 * args.switch_steps))
+		args.epsilon_decay_steps = (
+			decay_steps // args.num_envs * args.num_envs
+		)
 	args.num_stages = args.num_tasks * args.cycles
 	expected_steps = args.num_stages * args.switch_steps
 	if args.t_steps == 0:

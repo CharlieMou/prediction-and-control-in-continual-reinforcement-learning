@@ -60,7 +60,7 @@ def prepare_output_directories(args):
 		(args.output_dir / name).mkdir(parents=True, exist_ok=True)
 
 
-def describe_protocol(args):
+def describe_protocol(args, uses_replay=True):
 	train_stop = args.train_start_level + args.num_train_levels
 	test_stop = args.test_start_level + args.num_test_levels
 	print(f"Tasks: {', '.join(args.task_sequence)}; cycles={args.cycles}")
@@ -73,5 +73,8 @@ def describe_protocol(args):
 		f"Transitions={args.t_steps:,}; switch every {args.switch_steps:,}; "
 		f"parallel envs={args.num_envs}"
 	)
-	replay_gib = args.replay_size * 2 * 3 * 64 * 64 / 2**30
-	print(f"Replay observation storage reserves approximately {replay_gib:.1f} GiB")
+	if uses_replay:
+		replay_gib = args.replay_size * 2 * 3 * 64 * 64 / 2**30
+		print(
+			f"Replay observation storage reserves approximately {replay_gib:.1f} GiB"
+		)
