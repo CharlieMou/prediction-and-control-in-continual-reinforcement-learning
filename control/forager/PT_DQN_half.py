@@ -145,7 +145,7 @@ def get_action(obs):
 	return p_values[0][action], action
 
 
-algorithm_name = "PT-DQN tuned"
+algorithm_name = "PT-DQN"
 filename = (
 	f"PT_DQN_half_Forager_steps_{args.t_steps}_period_{args.reward_period}"
 	f"_fov_{args.aperture_size}_update_{args.update}_decay_{args.decay}"
