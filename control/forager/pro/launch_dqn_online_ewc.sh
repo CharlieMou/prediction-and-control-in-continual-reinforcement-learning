@@ -5,8 +5,8 @@ set -uo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-gpu=1
-seeds=(17 33 49)
+gpu=3
+seeds=(20 36 52)
 t_steps=10000000
 batch_size=32
 consolidation_period=50000
