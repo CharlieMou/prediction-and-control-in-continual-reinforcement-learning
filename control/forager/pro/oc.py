@@ -6,8 +6,10 @@ from pathlib import Path
 from typing import NamedTuple
 import copy
 import math
+import os
 import random
 import sys
+import tempfile
 
 import numpy as np
 import pickle
@@ -120,6 +122,14 @@ parser.add_argument("--entropy-reg", type=float, default=0.01,
 	help="entropy bonus coefficient for intra-option policies")
 parser.add_argument("--option-log-frequency", type=int, default=1000,
 	help="steps between lightweight option-dynamics W&B records")
+parser.add_argument(
+	"--option-visualize-interval", "--option_visualize_interval",
+	dest="option_visualize_interval", type=int, default=1_000_000,
+	help=(
+		"steps between W&B visualizations of the learned option policies; "
+		"with --save-model, checkpoints are saved at the same steps"
+	),
+)
 parser.add_argument("--save", action="store_true")
 parser.add_argument("--plot", action="store_true")
 parser.add_argument("--save-model", action="store_true")
@@ -137,6 +147,8 @@ if args.entropy_reg < 0.0:
 	raise ValueError("entropy-reg must be non-negative")
 if args.option_log_frequency <= 0:
 	raise ValueError("option-log-frequency must be positive")
+if args.option_visualize_interval <= 0:
+	raise ValueError("option-visualize-interval must be positive")
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -300,6 +312,176 @@ def option_gap_metrics():
 	}
 
 
+def option_grid_outputs(reference_observation):
+	"""Evaluate every option at each traversable cell without stepping env."""
+	core = env._env
+	width, height = core._size
+	center = args.aperture_size // 2
+	scalar_context = np.asarray(reference_observation)[
+		-env.scalar_observation_size:
+	]
+	observations = []
+	coordinates = []
+	valid = np.ones((height, width), dtype=np.bool_)
+
+	for y in range(height):
+		for x in range(width):
+			idx = x + y * width
+			if (
+				idx in core._obj_store.idx_to_name
+				and core._obj_store.idx_to_name[idx] == "wall"
+			):
+				valid[y, x] = False
+				continue
+
+			raw = core._get_observation((x, y)).copy()
+			# A collectable is removed before the agent observes its new cell.
+			# Clear the hypothetical agent cell to match that transition order.
+			raw[center, center] = False
+			observation = env._paper_observation(raw, None, 0.0)
+			# Position is the only variable in this diagnostic slice. Retain the
+			# current previous-action, previous-reward, and cue context.
+			observation[-env.scalar_observation_size:] = scalar_context
+			observations.append(observation)
+			coordinates.append((x, y))
+
+	was_training = Net.training
+	Net.eval()
+	with torch.no_grad():
+		batch = observation_tensor(np.stack(observations)).to(device)
+		output = Net(batch)
+		actions = output.action_logits.argmax(dim=2).cpu().numpy()
+		terminations = output.termination_probs.cpu().numpy()
+		option_values = output.option_values.cpu().numpy()
+	if was_training:
+		Net.train()
+
+	policy_maps = np.full(
+		(args.num_options, height, width), -1, dtype=np.int64
+	)
+	termination_maps = np.full(
+		(args.num_options, height, width), np.nan, dtype=np.float32
+	)
+	value_maps = np.full(
+		(args.num_options, height, width), np.nan, dtype=np.float32
+	)
+	for index, (x, y) in enumerate(coordinates):
+		policy_maps[:, y, x] = actions[index]
+		termination_maps[:, y, x] = terminations[index]
+		value_maps[:, y, x] = option_values[index]
+	return valid, policy_maps, termination_maps, value_maps
+
+
+def option_visualization(reference_observation, step):
+	"""Create a W&B-ready summary of all learned options on the live world."""
+	os.environ.setdefault(
+		"MPLCONFIGDIR",
+		str(Path(tempfile.gettempdir()) / "forager_matplotlib_cache"),
+	)
+	import matplotlib
+	matplotlib.use("Agg", force=True)
+	import matplotlib.pyplot as plt
+	from matplotlib.lines import Line2D
+
+	valid, policies, terminations, option_values = option_grid_outputs(
+		reference_observation
+	)
+	width, height = env._env._size
+	world = env._env.render(mode="world")
+	figure, axes = plt.subplots(
+		3, args.num_options,
+		figsize=(4.1 * args.num_options, 11.5),
+		constrained_layout=True,
+		squeeze=False,
+	)
+	action_vectors = ((0.0, 0.34), (0.34, 0.0), (0.0, -0.34), (-0.34, 0.0))
+	action_colors = ("tab:blue", "tab:orange", "tab:green", "tab:red")
+	action_names = ("up (0)", "right (1)", "down (2)", "left (3)")
+	y_grid, x_grid = np.mgrid[0:height, 0:width]
+	value_min = float(np.nanmin(option_values))
+	value_max = float(np.nanmax(option_values))
+	if math.isclose(value_min, value_max):
+		value_max = value_min + 1e-6
+
+	for option in range(args.num_options):
+		policy_axis = axes[0, option]
+		policy_axis.imshow(
+			world, origin="lower", extent=(0, width, 0, height), alpha=0.55
+		)
+		for action, ((dx, dy), color) in enumerate(zip(
+			action_vectors, action_colors
+		)):
+			mask = valid & (policies[option] == action)
+			policy_axis.quiver(
+				x_grid[mask] + 0.5, y_grid[mask] + 0.5,
+				np.full(mask.sum(), dx), np.full(mask.sum(), dy),
+				angles="xy", scale_units="xy", scale=1.0,
+				color=color, width=0.008, pivot="middle",
+			)
+		policy_axis.set_title(f"Option {option}: greedy intra-option action")
+
+		termination_axis = axes[1, option]
+		termination_axis.imshow(
+			world, origin="lower", extent=(0, width, 0, height), alpha=0.18
+		)
+		termination_image = termination_axis.imshow(
+			terminations[option], origin="lower", extent=(0, width, 0, height),
+			cmap="magma", vmin=0.0, vmax=1.0, alpha=0.82,
+		)
+		termination_axis.set_title(
+			f"Option {option}: termination probability"
+		)
+
+		value_axis = axes[2, option]
+		value_axis.imshow(
+			world, origin="lower", extent=(0, width, 0, height), alpha=0.18
+		)
+		value_image = value_axis.imshow(
+			option_values[option], origin="lower",
+			extent=(0, width, 0, height), cmap="viridis",
+			vmin=value_min, vmax=value_max, alpha=0.82,
+		)
+		value_axis.set_title(f"Option {option}: Q_Omega(s, option)")
+
+	for axis in axes.flat:
+		axis.set_xlim(0, width)
+		axis.set_ylim(0, height)
+		axis.set_xticks([])
+		axis.set_yticks([])
+	figure.colorbar(
+		termination_image, ax=list(axes[1]), shrink=0.82,
+		label="termination probability",
+	)
+	figure.colorbar(
+		value_image, ax=list(axes[2]), shrink=0.82, label="option value",
+	)
+	legend = [
+		Line2D([0], [0], color=color, lw=3, label=name)
+		for color, name in zip(action_colors, action_names)
+	]
+	figure.legend(
+		handles=legend, loc="lower center", ncol=len(legend), frameon=False
+	)
+	cue = np.asarray(reference_observation)[-4:]
+	figure.suptitle(
+		f"Option-Critic at step {step:,} | seed={args.seed} | "
+		f"task phase={env.task_phase} | cue={cue.astype(int).tolist()} | "
+		f"biome generations={list(env.biome_generations)}\n"
+		"Each map fixes the current previous-action/reward/cue context and "
+		"varies only agent position; walls are masked.",
+		fontsize=13,
+	)
+	image = wandb.Image(
+		figure,
+		caption=(
+			f"All option policies, termination maps, and option values at "
+			f"step {step:,} (seed {args.seed})"
+		),
+	)
+	plt.close(figure)
+	return image
+
+
 algorithm_name = "Option-Critic"
 filename = (
 	f"OC_UnendingFourBiomeForager_steps_{args.t_steps}"
@@ -308,6 +490,32 @@ filename = (
 	f"_temperature_{args.temperature}_termination_reg_{args.termination_reg}"
 	f"_entropy_reg_{args.entropy_reg}_lr_{args.lr1}_seed_{args.seed}"
 )
+
+
+def save_training_checkpoint(step):
+	"""Save model and optimizer state at a visualization boundary."""
+	checkpoint_dir = Path("models") / filename
+	checkpoint_dir.mkdir(parents=True, exist_ok=True)
+	checkpoint_path = checkpoint_dir / f"checkpoint_step_{step:08d}.pt"
+	torch.save({
+		"step": step,
+		"seed": args.seed,
+		"environment": env.game_name,
+		"config": vars(args),
+		"model_state_dict": Net.state_dict(),
+		"target_model_state_dict": Target_net.state_dict(),
+		"optimizer_state_dict": opt.state_dict(),
+		"model_spec": {
+			"input_dim": input_dim,
+			"num_actions": num_actions,
+			"image_shape": env.image_shape,
+			"num_options": args.num_options,
+			"temperature": args.temperature,
+		},
+	}, checkpoint_path)
+	return checkpoint_path
+
+
 wandb.init(
 	project="Forager_testbed",
 	name=filename,
@@ -320,6 +528,9 @@ wandb.init(
 		"option_execution": "call-and-return",
 		"policy_over_options": "epsilon-greedy",
 		"actor_updates": "online after replay warmup",
+		"option_visualization": (
+			"current world and scalar context; exhaustive traversable positions"
+		),
 	},
 )
 
@@ -405,7 +616,10 @@ for step in range(args.t_steps):
 
 	log_option_dynamics = (step + 1) % args.option_log_frequency == 0
 	log_training_metrics = (step + 1) % args.log_frequency == 0
-	if log_option_dynamics or log_training_metrics:
+	visualize_options = (step + 1) % args.option_visualize_interval == 0
+	if visualize_options and args.save_model:
+		save_training_checkpoint(step + 1)
+	if log_option_dynamics or log_training_metrics or visualize_options:
 		metrics = {}
 		if log_option_dynamics:
 			metrics.update({
@@ -457,12 +671,18 @@ for step in range(args.t_steps):
 				})
 			if last_critic_loss is not None:
 				metrics["loss/critic"] = last_critic_loss
+		if visualize_options:
+			metrics["option_visualization/all_options"] = (
+				option_visualization(state, step + 1)
+			)
 		wandb.log(metrics, step=step + 1)
 
 
 if args.save_model:
 	Path("models").mkdir(exist_ok=True)
 	torch.save(Net.state_dict(), Path("models") / f"{filename}_Net.pt")
+	if args.t_steps % args.option_visualize_interval != 0:
+		save_training_checkpoint(args.t_steps)
 
 if args.plot:
 	import matplotlib.pyplot as plt

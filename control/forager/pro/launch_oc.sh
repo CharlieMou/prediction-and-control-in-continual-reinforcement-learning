@@ -5,15 +5,16 @@ set -uo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-gpu=0
-seeds=(16 32 48)
+gpu=3
+seeds=(17 33 49)
 t_steps=10000000
 batch_size=32
-num_options=4
+num_options=8
 temperature=1.0
 termination_reg=0.015
 entropy_reg=0.01
 option_log_frequency=1000
+option_visualize_interval=1000000
 
 mkdir -p logs
 
@@ -44,6 +45,8 @@ for seed in "${seeds[@]}"; do
 		--termination-reg "$termination_reg" \
 		--entropy-reg "$entropy_reg" \
 		--option-log-frequency "$option_log_frequency" \
+		--option_visualize_interval "$option_visualize_interval" \
+		--save-model \
 		--save >"logs/${label}.log" 2>&1 &
 	pids+=("$!")
 	labels+=("$label")
