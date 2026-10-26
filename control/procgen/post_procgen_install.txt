@@ -1,0 +1,36 @@
+(ptdqn) moucl@ubuntu:~/moucharlie/projects/permanent_transient_td_learning/prediction-and-control-in-continual-reinforcement-learning/control/procgen$ pip install -r requirements.txt
+Collecting gym3==0.3.3 (from -r requirements.txt (line 3))
+  Using cached gym3-0.3.3-py3-none-any.whl.metadata (835 bytes)
+Collecting procgen==0.10.7 (from -r requirements.txt (line 5))
+  Using cached procgen-0.10.7-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (23 kB)
+Requirement already satisfied: numpy<2.0.0,>=1.11.0 in /home/moucl/miniconda3/envs/ptdqn/lib/python3.10/site-packages (from gym3==0.3.3->-r requirements.txt (line 3)) (1.26.0)
+Requirement already satisfied: cffi<2.0.0,>=1.13.0 in /home/moucl/miniconda3/envs/ptdqn/lib/python3.10/site-packages (from gym3==0.3.3->-r requirements.txt (line 3)) (1.15.0)
+Requirement already satisfied: imageio<3.0.0,>=2.6.0 in /home/moucl/miniconda3/envs/ptdqn/lib/python3.10/site-packages (from gym3==0.3.3->-r requirements.txt (line 3)) (2.31.3)
+Collecting imageio-ffmpeg<0.4.0,>=0.3.0 (from gym3==0.3.3->-r requirements.txt (line 3))
+  Using cached imageio_ffmpeg-0.3.0-py3-none-manylinux2010_x86_64.whl.metadata (1.4 kB)
+Collecting glfw<2.0.0,>=1.8.6 (from gym3==0.3.3->-r requirements.txt (line 3))
+  Using cached glfw-1.12.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38-none-manylinux2014_x86_64.whl.metadata (4.3 kB)
+Collecting moderngl<6.0.0,>=5.5.4 (from gym3==0.3.3->-r requirements.txt (line 3))
+  Using cached moderngl-5.12.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (7.8 kB)
+Requirement already satisfied: gym<1.0.0,>=0.15.0 in /home/moucl/miniconda3/envs/ptdqn/lib/python3.10/site-packages (from procgen==0.10.7->-r requirements.txt (line 5)) (0.23.0)
+Collecting filelock<4.0.0,>=3.0.0 (from procgen==0.10.7->-r requirements.txt (line 5))
+  Using cached filelock-3.32.7-py3-none-any.whl.metadata (2.0 kB)
+Requirement already satisfied: pycparser in /home/moucl/miniconda3/envs/ptdqn/lib/python3.10/site-packages (from cffi<2.0.0,>=1.13.0->gym3==0.3.3->-r requirements.txt (line 3)) (2.21)
+Requirement already satisfied: cloudpickle>=1.2.0 in /home/moucl/miniconda3/envs/ptdqn/lib/python3.10/site-packages (from gym<1.0.0,>=0.15.0->procgen==0.10.7->-r requirements.txt (line 5)) (2.0.0)
+Requirement already satisfied: gym_notices>=0.0.4 in /home/moucl/miniconda3/envs/ptdqn/lib/python3.10/site-packages (from gym<1.0.0,>=0.15.0->procgen==0.10.7->-r requirements.txt (line 5)) (0.0.6)
+Requirement already satisfied: pillow>=8.3.2 in /home/moucl/miniconda3/envs/ptdqn/lib/python3.10/site-packages (from imageio<3.0.0,>=2.6.0->gym3==0.3.3->-r requirements.txt (line 3)) (10.0.1)
+Collecting glcontext>=3.0.0 (from moderngl<6.0.0,>=5.5.4->gym3==0.3.3->-r requirements.txt (line 3))
+  Using cached glcontext-3.0.0-cp310-cp310-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.0 kB)
+Using cached gym3-0.3.3-py3-none-any.whl (50 kB)
+Using cached procgen-0.10.7-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (36.4 MB)
+Using cached filelock-3.32.7-py3-none-any.whl (100 kB)
+Using cached glfw-1.12.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38-none-manylinux2014_x86_64.whl (203 kB)
+Using cached imageio_ffmpeg-0.3.0-py3-none-manylinux2010_x86_64.whl (22.2 MB)
+Using cached moderngl-5.12.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (291 kB)
+Using cached glcontext-3.0.0-cp310-cp310-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl (51 kB)
+Installing collected packages: imageio-ffmpeg, glfw, glcontext, moderngl, filelock, gym3, procgen
+  Attempting uninstall: glfw
+    Found existing installation: glfw 2.5.3
+    Uninstalling glfw-2.5.3:
+      Successfully uninstalled glfw-2.5.3
+Successfully installed filelock-3.32.7 glcontext-3.0.0 glfw-1.12.0 gym3-0.3.3 imageio-ffmpeg-0.3.0 moderngl-5.12.0 procgen-0.10.7

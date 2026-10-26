@@ -22,14 +22,14 @@ for seed in "${seeds[@]}"; do
 		--seed "$seed" \
 		--t-steps "$t_steps" \
 		--batch-size "$batch_size" \
-		--aperture-size 9 \
+		--aperture-size 7 \
 		--reward-period 500000 \
 		--replay-size 1000 \
 		--minimum-replay-history 50 \
 		--update-frequency 4 \
 		--target-update-frequency 128 \
 		--lr1 3e-3 \
-		--ewc-lambda 10 \
+		--ewc-lambda 17.5 \
 		--ewc-gamma 0.95 \
 		--fisher-batches 100 \
 		--consolidation-period "$consolidation_period" \
