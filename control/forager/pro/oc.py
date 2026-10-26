@@ -64,14 +64,13 @@ class OptionCriticNetwork(nn.Module):
 		self._initialize_heads(feature_dim)
 
 	def _initialize_heads(self, feature_dim):
-		# Match the DQN value-head initialization. Zero policy logits and
-		# termination logits reproduce the neutral OC initialization.
+		# Match the DQN value-head initialization and keep neutral policy logits.
+		# The termination head retains nn.Linear's independent random
+		# initialization so options start with distinct termination functions.
 		nn.init.trunc_normal_(
 			self.option_values.weight, std=1.0 / math.sqrt(feature_dim)
 		)
 		nn.init.zeros_(self.option_values.bias)
-		nn.init.zeros_(self.terminations.weight)
-		nn.init.zeros_(self.terminations.bias)
 		nn.init.zeros_(self.option_policies.weight)
 		nn.init.zeros_(self.option_policies.bias)
 
