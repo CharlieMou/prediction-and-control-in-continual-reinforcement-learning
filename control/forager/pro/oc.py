@@ -381,7 +381,8 @@ def option_visualization(reference_observation, step):
 	import matplotlib
 	matplotlib.use("Agg", force=True)
 	import matplotlib.pyplot as plt
-	from matplotlib.lines import Line2D
+	from matplotlib.collections import LineCollection
+	from matplotlib.patches import Patch
 
 	valid, policies, terminations, option_values = option_grid_outputs(
 		reference_observation
@@ -391,12 +392,15 @@ def option_visualization(reference_observation, step):
 	figure, axes = plt.subplots(
 		3, args.num_options,
 		figsize=(4.1 * args.num_options, 11.5),
+		dpi=220,
 		constrained_layout=True,
 		squeeze=False,
 	)
 	action_vectors = ((0.0, 0.34), (0.34, 0.0), (0.0, -0.34), (-0.34, 0.0))
-	action_colors = ("tab:blue", "tab:orange", "tab:green", "tab:red")
-	action_names = ("up (0)", "right (1)", "down (2)", "left (3)")
+	option_palette = (
+		"#0072B2", "#D55E00", "#009E73", "#CC79A7",
+		"#E69F00", "#56B4E9", "#F0E442", "#000000",
+	)
 	y_grid, x_grid = np.mgrid[0:height, 0:width]
 	value_min = float(np.nanmin(option_values))
 	value_max = float(np.nanmax(option_values))
@@ -408,15 +412,13 @@ def option_visualization(reference_observation, step):
 		policy_axis.imshow(
 			world, origin="lower", extent=(0, width, 0, height), alpha=0.55
 		)
-		for action, ((dx, dy), color) in enumerate(zip(
-			action_vectors, action_colors
-		)):
+		for action, (dx, dy) in enumerate(action_vectors):
 			mask = valid & (policies[option] == action)
 			policy_axis.quiver(
 				x_grid[mask] + 0.5, y_grid[mask] + 0.5,
 				np.full(mask.sum(), dx), np.full(mask.sum(), dy),
 				angles="xy", scale_units="xy", scale=1.0,
-				color=color, width=0.008, pivot="middle",
+				color="black", width=0.008, pivot="middle",
 			)
 		policy_axis.set_title(f"Option {option}: greedy intra-option action")
 
@@ -455,13 +457,6 @@ def option_visualization(reference_observation, step):
 	figure.colorbar(
 		value_image, ax=list(axes[2]), shrink=0.82, label="option value",
 	)
-	legend = [
-		Line2D([0], [0], color=color, lw=3, label=name)
-		for color, name in zip(action_colors, action_names)
-	]
-	figure.legend(
-		handles=legend, loc="lower center", ncol=len(legend), frameon=False
-	)
 	cue = np.asarray(reference_observation)[-4:]
 	figure.suptitle(
 		f"Option-Critic at step {step:,} | seed={args.seed} | "
@@ -471,7 +466,7 @@ def option_visualization(reference_observation, step):
 		"varies only agent position; walls are masked.",
 		fontsize=13,
 	)
-	image = wandb.Image(
+	all_options_image = wandb.Image(
 		figure,
 		caption=(
 			f"All option policies, termination maps, and option values at "
@@ -479,7 +474,131 @@ def option_visualization(reference_observation, step):
 		),
 	)
 	plt.close(figure)
-	return image
+
+	def draw_executed_policy(axis, executed_options, title):
+		axis.imshow(
+			world, origin="lower", extent=(0, width, 0, height), alpha=0.58
+		)
+		# Encode the executed option with a slightly inset cell outline. This
+		# leaves the Forager cell contents unobscured and prevents adjacent
+		# cells from overwriting a shared edge with different option colors.
+		outline_inset = 0.055
+		for option in range(args.num_options):
+			color = option_palette[option % len(option_palette)]
+			option_mask = valid & (executed_options == option)
+			segments = []
+			for y, x in zip(*np.nonzero(option_mask)):
+				x0, x1 = x + outline_inset, x + 1.0 - outline_inset
+				y0, y1 = y + outline_inset, y + 1.0 - outline_inset
+				segments.extend((
+					((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)),
+					((x1, y1), (x0, y1)), ((x0, y1), (x0, y0)),
+				))
+			if segments:
+				axis.add_collection(LineCollection(
+					segments, colors=color, linewidths=1.15,
+					alpha=0.98, zorder=3,
+				))
+			for action, (dx, dy) in enumerate(action_vectors):
+				mask = (
+					option_mask
+					& (policies[option] == action)
+				)
+				axis.quiver(
+					x_grid[mask] + 0.5, y_grid[mask] + 0.5,
+					np.full(mask.sum(), dx), np.full(mask.sum(), dy),
+					angles="xy", scale_units="xy", scale=1.0,
+					color="black", edgecolor="white", linewidth=0.20,
+					width=0.009, pivot="middle", zorder=4,
+				)
+		axis.set_xlim(0, width)
+		axis.set_ylim(0, height)
+		axis.set_xticks([])
+		axis.set_yticks([])
+		axis.set_title(title)
+
+	option_legend = [
+		Patch(
+			facecolor="none",
+			edgecolor=option_palette[option % len(option_palette)],
+			linewidth=2.0,
+			label=f"Option {option}",
+		)
+		for option in range(args.num_options)
+	]
+	greedy_options = np.argmax(
+		np.where(np.isnan(option_values), -np.inf, option_values), axis=0
+	)
+
+	# This map composes the two greedy policies at an option boundary and does
+	# not condition on the option that was active before reaching the state.
+	boundary_figure, boundary_axis = plt.subplots(
+		figsize=(9.5, 9.5), dpi=240, constrained_layout=True
+	)
+	draw_executed_policy(
+		boundary_axis, greedy_options,
+		f"Greedy executed-option policy at step {step:,} | seed={args.seed}\n"
+		"ignoring termination: reselect argmax Q_Omega at every state",
+	)
+	boundary_axis.legend(
+		handles=option_legend, loc="upper center",
+		bbox_to_anchor=(0.5, -0.015), ncol=min(args.num_options, 4),
+		frameon=False,
+	)
+	boundary_image = wandb.Image(
+		boundary_figure,
+		caption=(
+			"Ignoring termination: cell-outline color is argmax Q_Omega; the "
+			f"black arrow is that option's greedy action at step {step:,}"
+		),
+	)
+	plt.close(boundary_figure)
+
+	# Under call-and-return, behavior is also conditioned on the incoming
+	# option. For a deterministic map, display the modal transition: terminate
+	# when beta >= 0.5, otherwise continue the incoming option.
+	termination_figure, termination_axes = plt.subplots(
+		1, args.num_options,
+		figsize=(4.4 * args.num_options, 6.0), dpi=240,
+		constrained_layout=False, squeeze=False,
+	)
+	for incoming_option, axis in enumerate(termination_axes[0]):
+		executed_options = np.full(
+			(height, width), incoming_option, dtype=np.int64
+		)
+		terminate = terminations[incoming_option] >= 0.5
+		executed_options[terminate] = greedy_options[terminate]
+		draw_executed_policy(
+			axis, executed_options,
+			f"Incoming option {incoming_option}\n"
+			"continue if beta < 0.5; otherwise reselect",
+		)
+	termination_figure.legend(
+		handles=option_legend, loc="lower center", ncol=min(args.num_options, 4),
+		bbox_to_anchor=(0.5, 0.015), frameon=False,
+	)
+	termination_figure.suptitle(
+		f"Modal call-and-return executed policy at step {step:,} | seed={args.seed}\n"
+		"cell-outline color: executed option | black arrow: its greedy action",
+		fontsize=13, y=0.98,
+	)
+	termination_figure.subplots_adjust(
+		left=0.02, right=0.99, bottom=0.14, top=0.72, wspace=0.16
+	)
+	termination_image = wandb.Image(
+		termination_figure,
+		caption=(
+			"With termination: one panel per incoming option; beta >= 0.5 "
+			f"triggers greedy option reselection at step {step:,}"
+		),
+	)
+	plt.close(termination_figure)
+	return {
+		"option_visualization/all_options": all_options_image,
+		"option_visualization/executed_option": [
+			boundary_image, termination_image,
+		],
+	}
 
 
 algorithm_name = "Option-Critic"
@@ -672,9 +791,7 @@ for step in range(args.t_steps):
 			if last_critic_loss is not None:
 				metrics["loss/critic"] = last_critic_loss
 		if visualize_options:
-			metrics["option_visualization/all_options"] = (
-				option_visualization(state, step + 1)
-			)
+			metrics.update(option_visualization(state, step + 1))
 		wandb.log(metrics, step=step + 1)
 
 
