@@ -1,6 +1,9 @@
+import time
+
+program_start_time = time.perf_counter()
+
 import numpy as np
 import pickle
-import itertools
 import torch
 import torch.optim as optim
 import copy
@@ -26,15 +29,26 @@ class ValueCloningMemory:
 		self.device = device
 		self.num_seen = 0
 
-	def store(self, state, q_values):
-		cloning_example = (state.cpu(), q_values.cpu())
-		self.num_seen += 1
-		if len(self.memory) < self.max_size:
-			self.memory.append(cloning_example)
-		else:
-			index = random.randrange(self.num_seen)
-			if index < self.max_size:
-				self.memory[index] = cloning_example
+	def reserve(self, num_candidates):
+		"""Choose the final reservoir slots before cloning targets are computed."""
+		selected = {}
+		final_size = len(self.memory)
+		for candidate_index in range(num_candidates):
+			self.num_seen += 1
+			if final_size < self.max_size:
+				index = final_size
+				final_size += 1
+			else:
+				index = random.randrange(self.num_seen)
+				if index >= self.max_size:
+					continue
+			selected[index] = candidate_index
+		return selected, final_size
+
+	def commit(self, selected, final_size):
+		self.memory.extend([None] * (final_size - len(self.memory)))
+		for index, cloning_example in selected.items():
+			self.memory[index] = cloning_example
 
 	def sample(self):
 		batch = random.sample(self.memory, min(len(self.memory), self.batch_size))
@@ -105,13 +119,20 @@ def train_Net():
 @torch.no_grad()
 def store_value_cloning_targets():
 	"""Store the completed task's Q-vectors as value-cloning targets."""
-	for start in range(0, exp_replay.size(), args.batch_size):
-		batch = list(itertools.islice(
-			exp_replay.memory, start, start + args.batch_size))
-		states = torch.stack([transition[0] for transition in batch]).to(device)
+	transitions = list(exp_replay.memory)
+	reservoir_slots, final_size = value_cloning_memory.reserve(len(transitions))
+	selected = {}
+	reservoir_slots = list(reservoir_slots.items())
+	for start in range(0, len(reservoir_slots), args.batch_size):
+		batch = reservoir_slots[start:start + args.batch_size]
+		states = torch.stack([
+			transitions[candidate_index][0]
+			for _, candidate_index in batch
+		]).to(device)
 		q_values = Net(states)
-		for state, cloning_q_target in zip(states, q_values):
-			value_cloning_memory.store(state, cloning_q_target)
+		for (slot, _), state, cloning_q_target in zip(batch, states, q_values):
+			selected[slot] = (state.cpu(), cloning_q_target.cpu())
+	value_cloning_memory.commit(selected, final_size)
 
 
 def get_action(c_obs):
@@ -129,6 +150,13 @@ def get_action(c_obs):
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
+
+
+def synchronize_device():
+	if device.type == "cuda":
+		torch.cuda.synchronize(device)
+
+
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 random.seed(args.seed)
@@ -146,8 +174,14 @@ wandb.init(project="MinAtar_testbed", name=filename, group=algorithm_name,
 			"task_sequence": list(TASK_SEQUENCE), "gamma": gamma,
 			"epsilon": epsilon, "return_smoothing_window": return_smoothing_window})
 
+environment_interaction_time = 0.0
+gradient_update_time = 0.0
+auxiliary_memory_time = 0.0
+
 task_index = 0
+environment_start_time = time.perf_counter()
 env = CL_envs_func(args.env_name, args.seed, task_index)
+environment_interaction_time += time.perf_counter() - environment_start_time
 in_channels = env.observation_space.shape[2]
 num_actions = env.action_space.n
 Net = CNN(in_channels, num_actions).to(device)
@@ -165,33 +199,50 @@ returns_array = np.zeros(args.t_steps)
 avg_return = 0
 epi_return = 0
 done = False
+environment_start_time = time.perf_counter()
 cs = env.reset()
+environment_interaction_time += time.perf_counter() - environment_start_time
 return_window_sum = 0.0
 
 for step in range(args.t_steps):
 	wandb_metrics = {}
 	if step > 0 and step%args.switch == 0:
 		task_index += 1
+		environment_start_time = time.perf_counter()
 		env = CL_envs_func(args.env_name, args.seed, task_index)
 		cs = env.reset()
+		environment_interaction_time += time.perf_counter() - environment_start_time
 		avg_return = 0
 		epi_return = 0
 		diagnostics.start_training_phase()
+	environment_start_time = time.perf_counter()
 	_, c_action = get_action(cs)
 	ns, rew, done, _ = env.step(c_action)
+	environment_interaction_time += time.perf_counter() - environment_start_time
 	epi_return += rew
 	exp_replay.store(cs, c_action, ns, rew, done)
 	if exp_replay.size() >= args.batch_size:
+		synchronize_device()
+		gradient_start_time = time.perf_counter()
 		loss, td_loss, value_cloning_loss = train_Net()
+		synchronize_device()
+		gradient_update_time += time.perf_counter() - gradient_start_time
 	cs = ns
 	if (step+1)%args.switch == 0 and step+1 < args.t_steps:
+		synchronize_device()
+		auxiliary_memory_start_time = time.perf_counter()
 		store_value_cloning_targets()
+		synchronize_device()
+		auxiliary_memory_time += (
+			time.perf_counter() - auxiliary_memory_start_time)
 	if (step+1)%1000 == 0:
 		Target_net.load_state_dict(Net.state_dict())
 		wandb_metrics.update(diagnostics.action_gap_metrics(
 			Net, exp_replay, device, env.game_name))
 	if done:
+		environment_start_time = time.perf_counter()
 		cs = env.reset()
+		environment_interaction_time += time.perf_counter() - environment_start_time
 		avg_return = 0.99 * avg_return + 0.01 * epi_return
 		epi_return = 0
 	returns_array[step] = copy.copy(avg_return)
@@ -207,7 +258,11 @@ for step in range(args.t_steps):
 			Net, device, completed_stages))
 	wandb_metrics.update({"episodic_return_10000": smoothed_return,
 			"task_index": task_index,
-			"vc/value_memory_size": value_cloning_memory.size()})
+			"vc/value_memory_size": value_cloning_memory.size(),
+			"wall_clock/environment_interaction_seconds": environment_interaction_time,
+			"wall_clock/gradient_updates_seconds": gradient_update_time,
+			"wall_clock/auxiliary_memory_seconds": auxiliary_memory_time,
+			"wall_clock/total_seconds": time.perf_counter() - program_start_time})
 	if exp_replay.size() >= args.batch_size:
 		wandb_metrics.update({"loss/total": loss, "loss/td": td_loss,
 				"loss/value_cloning": value_cloning_loss})
@@ -223,3 +278,10 @@ if args.save:
 	with open("results/"+filename+"_returns.pkl", "wb") as f:
 		pickle.dump(returns_array, f)
 wandb.finish()
+synchronize_device()
+total_wall_clock_time = time.perf_counter() - program_start_time
+print("Wall-clock time (seconds): "
+		f"environment interaction={environment_interaction_time:.6f}, "
+		f"gradient updates={gradient_update_time:.6f}, "
+		f"auxiliary memory={auxiliary_memory_time:.6f}, "
+		f"total={total_wall_clock_time:.6f}")
