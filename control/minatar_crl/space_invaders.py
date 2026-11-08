@@ -47,10 +47,7 @@ class Env:
                 'alien_right':3,
                 'friendly_bullet':4,
                 'enemy_bullet':5,
-                'misc_1':6,
-                'misc_2':7,
-                'misc_3':8,
-                'misc_4':9
+                'misc_1':6
             }
 
         self.action_map = ['n','l','u','r','d','f']
