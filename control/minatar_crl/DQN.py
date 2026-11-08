@@ -1,3 +1,7 @@
+import time
+
+program_start_time = time.perf_counter()
+
 import numpy as np
 import pickle
 import itertools
@@ -73,6 +77,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #torch.dev
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
+def synchronize_device():
+	if device.type == "cuda":
+		torch.cuda.synchronize(device)
+
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 random.seed(args.seed)
@@ -93,8 +101,13 @@ wandb.init(
 			"return_smoothing_window": return_smoothing_window}
 )
 
+environment_interaction_time = 0.0
+gradient_update_time = 0.0
+
 task_index = 0
+environment_start_time = time.perf_counter()
 env = CL_envs_func(args.env_name, args.seed, task_index)
+environment_interaction_time += time.perf_counter() - environment_start_time
 in_channels = env.observation_space.shape[2]
 num_actions = env.action_space.n
 
@@ -114,7 +127,9 @@ returns_array = np.zeros(args.t_steps)
 avg_return = 0
 epi_return = 0
 done = False
+environment_start_time = time.perf_counter()
 cs = env.reset()
+environment_interaction_time += time.perf_counter() - environment_start_time
 return_window_sum = 0.0
 
 for step in range(args.t_steps):
@@ -122,19 +137,27 @@ for step in range(args.t_steps):
 	
 	if step > 0 and step%args.switch == 0:
 		task_index += 1
+		environment_start_time = time.perf_counter()
 		env = CL_envs_func(args.env_name, args.seed, task_index)
 		cs = env.reset()
+		environment_interaction_time += time.perf_counter() - environment_start_time
 		avg_return = 0
 		epi_return = 0
 		diagnostics.start_training_phase()
 	
+	environment_start_time = time.perf_counter()
 	_, c_action = get_action(cs)
 	ns, rew, done, _ = env.step(c_action)
+	environment_interaction_time += time.perf_counter() - environment_start_time
 	epi_return += rew
 	exp_replay.store(cs, c_action, ns, rew, done)
 	
 	if exp_replay.size() >= args.batch_size:
+		synchronize_device()
+		gradient_start_time = time.perf_counter()
 		loss = train_Net()
+		synchronize_device()
+		gradient_update_time += time.perf_counter() - gradient_start_time
 	
 	cs = ns
 
@@ -145,7 +168,9 @@ for step in range(args.t_steps):
 		))
 
 	if done:
+		environment_start_time = time.perf_counter()
 		cs = env.reset()
+		environment_interaction_time += time.perf_counter() - environment_start_time
 		avg_return = 0.99 * avg_return + 0.01 * epi_return
 		epi_return = 0
 
@@ -162,7 +187,10 @@ for step in range(args.t_steps):
 			Net, device, completed_stages
 		))
 	wandb_metrics.update({"episodic_return_10000": smoothed_return,
-			"task_index": task_index})
+			"task_index": task_index,
+			"wall_clock/environment_interaction_seconds": environment_interaction_time,
+			"wall_clock/gradient_updates_seconds": gradient_update_time,
+			"wall_clock/total_seconds": time.perf_counter() - program_start_time})
 	wandb.log(wandb_metrics, step=step)
 
 if args.save_model:
@@ -178,3 +206,9 @@ if args.save:
 		pickle.dump(returns_array, f)
 
 wandb.finish()
+synchronize_device()
+total_wall_clock_time = time.perf_counter() - program_start_time
+print("Wall-clock time (seconds): "
+		f"environment interaction={environment_interaction_time:.6f}, "
+		f"gradient updates={gradient_update_time:.6f}, "
+		f"total={total_wall_clock_time:.6f}")
