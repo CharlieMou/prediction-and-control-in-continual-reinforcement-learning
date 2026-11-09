@@ -60,7 +60,7 @@ seeds=(16 32 48)
 t_steps=$(python -c 'from CL_envs_fixed import NUM_TASK_STAGES; print(NUM_TASK_STAGES * 1_000_000)')
 switch_steps=1000000
 batch_size=64
-lambda_vc=2
+lambda_vc=1
 value_memory_size=10000
 
 mkdir -p logs

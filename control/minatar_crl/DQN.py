@@ -90,6 +90,7 @@ filename = "DQN"+"_env_name_"+args.env_name+"_gamma_"+misc_param['gamma']+\
 		str(args.batch_size)+"_lr1_"+str(args.lr1)+"_seed_"+str(args.seed)
 
 return_smoothing_window = 10000
+resource_log_frequency = 500000
 algorithm_name = "DQN"
 wandb.init(
 	project="MinAtar_testbed",
@@ -187,7 +188,9 @@ for step in range(args.t_steps):
 			Net, device, completed_stages
 		))
 	wandb_metrics.update({"episodic_return_10000": smoothed_return,
-			"task_index": task_index,
+			"task_index": task_index})
+	if (step+1)%resource_log_frequency == 0:
+		wandb_metrics.update({
 			"wall_clock/environment_interaction_seconds": environment_interaction_time,
 			"wall_clock/gradient_updates_seconds": gradient_update_time,
 			"wall_clock/total_seconds": time.perf_counter() - program_start_time})
@@ -205,10 +208,10 @@ if args.save:
 	with open("results/"+filename+"_returns.pkl", "wb") as f:
 		pickle.dump(returns_array, f)
 
-wandb.finish()
 synchronize_device()
 total_wall_clock_time = time.perf_counter() - program_start_time
 print("Wall-clock time (seconds): "
 		f"environment interaction={environment_interaction_time:.6f}, "
 		f"gradient updates={gradient_update_time:.6f}, "
-		f"total={total_wall_clock_time:.6f}")
+		f"total={total_wall_clock_time:.6f}", flush=True)
+wandb.finish()

@@ -95,6 +95,36 @@ class RetrospectiveRevaluation:
 	def size(self):
 		return len(self.memory)
 
+	def memory_footprint(self):
+		"""Return the tensor data stored by GAC, in bytes."""
+		state_bytes = sum(state.numel() * state.element_size()
+				for state, _, _ in self.memory)
+		action_bytes = sum(action.numel() * action.element_size()
+				for _, action, _ in self.memory)
+		margin_bytes = sum(margin.numel() * margin.element_size()
+				for _, _, margin in self.memory)
+		return {"states": state_bytes, "actions": action_bytes,
+				"margins": margin_bytes,
+				"total": state_bytes + action_bytes + margin_bytes}
+
+
+def permanent_replay_item_footprint(item):
+	"""Return one permanent replay item's tensor data, in bytes."""
+	state, action, permanent_value = item
+	return {"states": state.numel() * state.element_size(),
+			"actions": action.numel() * action.element_size(),
+			"values": permanent_value.numel() * permanent_value.element_size()}
+
+
+def permanent_replay_memory_footprint(memory):
+	"""Return the tensor data stored by permanent replay, in bytes."""
+	footprint = {"states": 0, "actions": 0, "values": 0}
+	for item in memory:
+		for category, num_bytes in permanent_replay_item_footprint(item).items():
+			footprint[category] += num_bytes
+	footprint["total"] = sum(footprint.values())
+	return footprint
+
 
 parser = ArgumentParser(description="Parameters for the code - PT-DQN-GAC")
 parser.add_argument('--seed', type=int, default=0, help="Random seed")
@@ -307,6 +337,7 @@ filename = "PT_DQN_GAC_DoneRight_0.5x_rho_"+str(args.rho)+"_align_"+str(args.ali
 		"_lr2_"+str(args.lr2)+"_batch_"+str(args.batch_size)+"_seed_"+str(args.seed)
 
 return_smoothing_window = 10000
+resource_log_frequency = 500000
 algorithm_name = "PT-DQN w/ GAC"
 wandb.init(
 	project="MinAtar_testbed",
@@ -432,7 +463,22 @@ for step in range(args.t_steps):
 		))
 	wandb_metrics.update({"episodic_return_10000": smoothed_return,
 			"task_index": task_index,
-			"gac/revaluation_size": retrospective_revaluation.size(),
+			"gac/revaluation_size": retrospective_revaluation.size()})
+	if (step+1)%resource_log_frequency == 0:
+		gac_memory_footprint = retrospective_revaluation.memory_footprint()
+		permanent_replay_footprint = permanent_replay_memory_footprint(
+			exp_replay_PM.memory)
+		wandb_metrics.update({
+			"memory/gac_states_bytes": gac_memory_footprint["states"],
+			"memory/gac_actions_bytes": gac_memory_footprint["actions"],
+			"memory/gac_margins_bytes": gac_memory_footprint["margins"],
+			"memory/gac_total_bytes": gac_memory_footprint["total"],
+			"memory/permanent_replay_states_bytes": permanent_replay_footprint["states"],
+			"memory/permanent_replay_actions_bytes": permanent_replay_footprint["actions"],
+			"memory/permanent_replay_values_bytes": permanent_replay_footprint["values"],
+			"memory/permanent_replay_total_bytes": permanent_replay_footprint["total"],
+			"memory/total_bytes": (gac_memory_footprint["total"]
+					+ permanent_replay_footprint["total"]),
 			"wall_clock/environment_interaction_seconds": environment_interaction_time,
 			"wall_clock/gradient_updates_seconds": gradient_update_time,
 			"wall_clock/auxiliary_memory_seconds": auxiliary_memory_time,
@@ -454,11 +500,11 @@ if args.save:
 	with open("results/"+filename+"_returns.pkl", "wb") as f:
 		pickle.dump(returns_array, f)
 
-wandb.finish()
 synchronize_device()
 total_wall_clock_time = time.perf_counter() - program_start_time
 print("Wall-clock time (seconds): "
 		f"environment interaction={environment_interaction_time:.6f}, "
 		f"gradient updates={gradient_update_time:.6f}, "
 		f"auxiliary memory={auxiliary_memory_time:.6f}, "
-		f"total={total_wall_clock_time:.6f}")
+		f"total={total_wall_clock_time:.6f}", flush=True)
+wandb.finish()
