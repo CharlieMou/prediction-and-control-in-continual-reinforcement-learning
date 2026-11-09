@@ -95,6 +95,7 @@ class SquareWaveMushroom(ForagerObject):
 			amplitude: float,
 			period: int,
 			bounds,
+			fixed_task_phase: int | None = None,
 			loc=None,
 	):
 		super().__init__(name=name)
@@ -103,16 +104,20 @@ class SquareWaveMushroom(ForagerObject):
 		self.amplitude = amplitude
 		self.period = period
 		self.bounds = bounds
+		self.fixed_task_phase = fixed_task_phase
 		self.target_location = loc
 
 	def reward(self, rng: np.random.Generator, clock: int) -> float:
-		position = clock % self.period
-		if position == 0:
-			square = 0.0
-		elif position < self.period // 2:
-			square = 1.0
+		if self.fixed_task_phase is not None:
+			square = 1.0 if self.fixed_task_phase == 0 else -1.0
 		else:
-			square = -1.0
+			position = clock % self.period
+			if position == 0:
+				square = 0.0
+			elif position < self.period // 2:
+				square = 1.0
+			else:
+				square = -1.0
 		return self.base_reward + self.amplitude * square
 
 	def regen_delay(self, rng: np.random.Generator, clock: int) -> int:
@@ -351,6 +356,7 @@ class TwoBiomeForagerEnv:
 			aperture_size: int = DEFAULT_APERTURE,
 			reward_period: int = DEFAULT_REWARD_PERIOD,
 			expiry_time: int = DEFAULT_EXPIRY_TIME,
+			fixed_task_phase: int | None = None,
 	):
 		if aperture_size <= 0 or aperture_size % 2 == 0:
 			raise ValueError("aperture_size must be a positive odd integer")
@@ -358,11 +364,14 @@ class TwoBiomeForagerEnv:
 			raise ValueError("reward_period must be an even integer greater than one")
 		if expiry_time <= 0:
 			raise ValueError("expiry_time must be positive")
+		if fixed_task_phase not in (None, 0, 1):
+			raise ValueError("fixed_task_phase must be None, 0, or 1")
 
 		self.seed = seed
 		self.aperture_size = aperture_size
 		self.reward_period = reward_period
 		self.expiry_time = expiry_time
+		self.fixed_task_phase = fixed_task_phase
 		self.action_space = _Discrete(4, seed)
 		# 9x9x3 color one-hot plus previous-action one-hot and previous reward.
 		self.image_shape = (aperture_size, aperture_size, 3)
@@ -375,6 +384,8 @@ class TwoBiomeForagerEnv:
 
 	@property
 	def task_phase(self) -> int:
+		if self.fixed_task_phase is not None:
+			return self.fixed_task_phase
 		position = self.clock % self.reward_period
 		return 0 if position == 0 or position < self.reward_period // 2 else 1
 
@@ -387,6 +398,7 @@ class TwoBiomeForagerEnv:
 			amplitude=amplitude,
 			period=period,
 			bounds=bounds,
+			fixed_task_phase=self.fixed_task_phase,
 		)
 
 	def _build(self):

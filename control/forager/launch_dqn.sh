@@ -5,8 +5,8 @@ set -uo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-gpu=3
-seeds=(18 34 50)
+gpu=0
+seeds=(16 32 48)
 t_steps=10000000
 batch_size=32
 
@@ -28,6 +28,7 @@ for seed in "${seeds[@]}"; do
 		--update-frequency 4 \
 		--target-update-frequency 128 \
 		--lr1 3e-3 \
+		--wandb-mode offline \
 		--save >"logs/${label}.log" 2>&1 &
 	pids+=("$!")
 	labels+=("$label")

@@ -16,6 +16,11 @@ from forager_env import (
 )
 from model import CNN
 from replay import expReplay, observation_tensor
+from lifetime_return.evaluator import (
+	HistoricalTaskEvaluator,
+	add_lifetime_return_arguments,
+	validate_lifetime_return_arguments,
+)
 
 
 parser = ArgumentParser(description="DQN on the Figure 5 Forager task")
@@ -30,8 +35,10 @@ parser.add_argument("--save", action="store_true")
 parser.add_argument("--plot", action="store_true")
 parser.add_argument("--save-model", action="store_true")
 add_forager_arguments(parser)
+add_lifetime_return_arguments(parser)
 args = parser.parse_args()
 validate_forager_arguments(args)
+validate_lifetime_return_arguments(args)
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -98,6 +105,17 @@ wandb.init(
 	config={**vars(args), "algorithm": algorithm_name,
 			"environment": env.game_name},
 )
+lifetime_evaluator = HistoricalTaskEvaluator(
+	args,
+	method=algorithm_name,
+	series="DQN",
+	run_filename=(
+		f"{filename}_evalfreq_{args.lifetime_eval_frequency}"
+		f"_evalsteps_{args.lifetime_eval_steps}"
+		f"_evalrollouts_{args.lifetime_eval_rollouts}"
+		f"_evaleps_{args.lifetime_eval_epsilon}"
+	),
+)
 
 
 returns_array = np.zeros(args.t_steps, dtype=np.float32)
@@ -109,6 +127,7 @@ state = env.reset()
 for step in range(args.t_steps):
 	action = get_action(state)
 	next_state, reward, done, info = env.step(action)
+	lifetime_evaluator.observe_phase(info["task_phase"])
 	exp_replay.store(state, action, next_state, reward, done)
 	state = next_state
 
@@ -137,6 +156,7 @@ for step in range(args.t_steps):
 		})
 		if last_loss is not None:
 			metrics["loss/td"] = last_loss
+		metrics.update(lifetime_evaluator.metrics(step + 1, Net, device))
 		wandb.log(metrics, step=step + 1)
 
 
@@ -154,5 +174,6 @@ if args.save:
 	with (Path("results") / f"{filename}_returns.pkl").open("wb") as f:
 		pickle.dump(returns_array, f)
 
+lifetime_evaluator.close()
 env.close()
 wandb.finish()
