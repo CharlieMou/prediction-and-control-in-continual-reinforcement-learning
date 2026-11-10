@@ -301,18 +301,21 @@ class AuxiliaryMemoryBoundAnalyzer:
 	"""Evaluate the empirical forgetting bound on the GAC memory mixture."""
 
 	def __init__(self, rho, device, evaluation_start=3000000,
-			evaluation_interval=1000000, threshold_count=256,
-			q_batch_size=1024):
+			evaluation_interval=1000000, frequent_log_interval=250000,
+			threshold_count=256, q_batch_size=1024):
 		self.rho = rho
 		self.device = device
 		self.evaluation_start = evaluation_start
 		self.evaluation_interval = evaluation_interval
+		self.frequent_log_interval = frequent_log_interval
 		self.threshold_count = threshold_count
 		self.q_batch_size = q_batch_size
 		wandb.config.update({
 			"empirical_bound_distribution": "uniform_gac_auxiliary_memory",
+			"empirical_bound_delta_selection": "finite_log_grid_only",
 			"empirical_bound_evaluation_start": evaluation_start,
 			"empirical_bound_evaluation_interval": evaluation_interval,
+			"empirical_bound_frequent_log_interval": frequent_log_interval,
 			"empirical_bound_threshold_count": threshold_count,
 		})
 
@@ -341,10 +344,14 @@ class AuxiliaryMemoryBoundAnalyzer:
 	@torch.no_grad()
 	def update(self, step, net, auxiliary_memory):
 		"""Evaluate Lemma D.1.1 under the current empirical memory measure."""
-		should_evaluate = (
+		should_log_frequent = (
+			step >= self.evaluation_start
+			and (step - self.evaluation_start) % self.frequent_log_interval == 0)
+		should_log_full = (
 			step >= self.evaluation_start
 			and (step - self.evaluation_start) % self.evaluation_interval == 0)
-		if not should_evaluate or auxiliary_memory.size() == 0:
+		if (not should_log_frequent and not should_log_full) \
+				or auxiliary_memory.size() == 0:
 			return {}
 
 		was_training = net.training
@@ -368,8 +375,6 @@ class AuxiliaryMemoryBoundAnalyzer:
 				self.rho * gaps - continual_gaps, 0.0)
 			regularizer = float(violations.mean())
 			forgetting = float((q_values.argmax(axis=1) != actions).mean())
-			bound_star, delta_star, delta_side = empirical_bound_infimum(
-				gaps, regularizer, self.rho)
 
 			positive = gaps[gaps > 0]
 			if positive.size:
@@ -383,9 +388,26 @@ class AuxiliaryMemoryBoundAnalyzer:
 				sorted_gaps, deltas, side="right") / len(gaps)
 			bounds = ecdf + regularizer / (self.rho * deltas) \
 				if self.rho > 0 else np.full_like(deltas, np.nan)
+			if self.rho > 0:
+				best = int(np.argmin(bounds))
+				bound_star = float(bounds[best])
+				delta_star = float(deltas[best])
+				delta_side = "finite_grid"
+			else:
+				bound_star = float("nan")
+				delta_star = float("nan")
+				delta_side = "undefined"
 			finite_delta_star = delta_star \
 				if np.isfinite(delta_star) else None
 			bound_slack = bound_star - forgetting
+
+			prefix = "theorem1/memory"
+			metrics = {
+				f"{prefix}/behavioral_forgetting": forgetting,
+				f"{prefix}/bound_star": bound_star,
+			}
+			if not should_log_full:
+				return metrics
 
 			for index, gap in enumerate(gaps):
 				self.gap_table.add_data(step, index, float(gap))
@@ -397,11 +419,8 @@ class AuxiliaryMemoryBoundAnalyzer:
 				step, len(memory), regularizer, forgetting, bound_star,
 				finite_delta_star, delta_side, bound_slack)
 
-			prefix = "theorem1/memory"
-			metrics = {
+			metrics.update({
 				f"{prefix}/regularizer": regularizer,
-				f"{prefix}/behavioral_forgetting": forgetting,
-				f"{prefix}/bound_star": bound_star,
 				f"{prefix}/bound_slack": bound_slack,
 				f"{prefix}/delta_star_at_infinity":
 					float(delta_side == "infinity"),
@@ -409,7 +428,7 @@ class AuxiliaryMemoryBoundAnalyzer:
 				"theorem1/data/memory_gaps": self.gap_table,
 				"theorem1/data/memory_bound": self.bound_table,
 				"theorem1/data/memory_summary": self.summary_table,
-			}
+			})
 			if finite_delta_star is not None:
 				metrics[f"{prefix}/delta_star"] = finite_delta_star
 			return metrics

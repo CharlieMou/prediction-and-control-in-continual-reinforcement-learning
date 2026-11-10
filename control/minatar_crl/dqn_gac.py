@@ -283,7 +283,8 @@ diagnostics = ContinualDiagnostics(args.seed, gamma, args.eval_episodes,
 theorem1_analysis = AuxiliaryMemoryBoundAnalyzer(
 		args.rho, device,
 		evaluation_start=len(set(TASK_SEQUENCE)) * args.switch,
-		evaluation_interval=args.switch)
+		evaluation_interval=args.switch,
+		frequent_log_interval=250000)
 
 returns_array = np.zeros(args.t_steps)
 
