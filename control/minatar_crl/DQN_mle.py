@@ -1,3 +1,7 @@
+import time
+
+program_start_time = time.perf_counter()
+
 import os
 import pickle
 import random
@@ -45,6 +49,15 @@ class MetaReplay:
 
 	def size(self):
 		return len(self.memory)
+
+	def memory_footprint(self):
+		"""Return the stored state/action tensor data, in bytes."""
+		state_bytes = sum(state.numel() * state.element_size()
+				for state, _ in self.memory)
+		action_bytes = sum(action.numel() * action.element_size()
+				for _, action in self.memory)
+		return {"states": state_bytes, "actions": action_bytes,
+				"total": state_bytes + action_bytes}
 
 
 parser = ArgumentParser(description="DQN w/ MLE for the fixed MinAtar curriculum")
@@ -112,6 +125,12 @@ epsilon = float(misc_param['epsilon'])
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
+
+
+def synchronize_device():
+	if device.type == "cuda":
+		torch.cuda.synchronize(device)
+
 
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
@@ -212,6 +231,7 @@ filename = (f"DQN_MLE_env_name_{args.env_name}_gamma_{misc_param['gamma']}"
 		f"_lambda_reg_{args.lambda_reg}_seed_{args.seed}")
 
 return_smoothing_window = 10000
+resource_log_frequency = 500000
 algorithm_name = "DQN w/ MLE"
 wandb.init(
 	project="MinAtar_testbed",
@@ -225,8 +245,14 @@ wandb.init(
 			"meta_lr_decay_frequency": 2}
 )
 
+environment_interaction_time = 0.0
+gradient_update_time = 0.0
+meta_experience_time = 0.0
+
 task_index = 0
+environment_start_time = time.perf_counter()
 env = CL_envs_func(args.env_name, args.seed, task_index)
+environment_interaction_time += time.perf_counter() - environment_start_time
 in_channels = env.observation_space.shape[2]
 num_actions = env.action_space.n
 
@@ -254,7 +280,9 @@ returns_array = np.zeros(args.t_steps)
 return_window_sum = 0.0
 avg_return = 0.0
 episode_return = 0.0
+environment_start_time = time.perf_counter()
 observation = env.reset()
+environment_interaction_time += time.perf_counter() - environment_start_time
 global_step = 0
 meta_warmup = False
 stage_choices = []
@@ -322,26 +350,56 @@ def record_step(step, extra_metrics=None):
 		metrics.update({"loss/total": last_total_loss,
 				"loss/td": last_td_loss,
 				"loss/behavior_cloning_kl": last_bc_loss})
+	if (step+1)%resource_log_frequency == 0:
+		fast2meta_footprint = fast2meta_replay.memory_footprint()
+		meta_replay_footprint = meta_replay.memory_footprint()
+		meta_states_bytes = (fast2meta_footprint["states"]
+				+ meta_replay_footprint["states"])
+		meta_actions_bytes = (fast2meta_footprint["actions"]
+				+ meta_replay_footprint["actions"])
+		meta_total_bytes = (fast2meta_footprint["total"]
+				+ meta_replay_footprint["total"])
+		metrics.update({
+			"memory/fast2meta_states_bytes": fast2meta_footprint["states"],
+			"memory/fast2meta_actions_bytes": fast2meta_footprint["actions"],
+			"memory/fast2meta_total_bytes": fast2meta_footprint["total"],
+			"memory/meta_replay_states_bytes": meta_replay_footprint["states"],
+			"memory/meta_replay_actions_bytes": meta_replay_footprint["actions"],
+			"memory/meta_replay_total_bytes": meta_replay_footprint["total"],
+			"memory/meta_experience_states_bytes": meta_states_bytes,
+			"memory/meta_experience_actions_bytes": meta_actions_bytes,
+			"memory/meta_experience_total_bytes": meta_total_bytes,
+			"memory/total_bytes": meta_total_bytes,
+			"wall_clock/environment_interaction_seconds": environment_interaction_time,
+			"wall_clock/gradient_updates_seconds": gradient_update_time,
+			"wall_clock/meta_experience_seconds": meta_experience_time,
+			"wall_clock/total_seconds": time.perf_counter() - program_start_time})
 	wandb.log(metrics, step=step)
 
 
 def detection_rollout(learner, number_of_steps):
 	"""Evaluate greedily and retain the interactions for fast learning."""
-	global observation, global_step, avg_return
+	global observation, global_step, avg_return, environment_interaction_time
 	local_return = 0.0
 	local_length = 0
 	completed_returns = []
 	for _ in range(number_of_steps):
 		if global_step >= args.t_steps:
 			break
+		environment_start_time = time.perf_counter()
 		action, _ = greedy_action(observation, learner)
 		next_observation, reward, done, _ = env.step(action)
+		environment_interaction_time += (
+				time.perf_counter() - environment_start_time)
 		fast_replay.store(observation, action, next_observation, reward, done)
 		local_return += reward
 		local_length += 1
 		observation = next_observation
 		if done or local_length > 300:
+			environment_start_time = time.perf_counter()
 			observation = env.reset()
+			environment_interaction_time += (
+					time.perf_counter() - environment_start_time)
 			avg_return = 0.99 * avg_return + 0.01 * local_return
 			completed_returns.append(local_return)
 			local_return = 0.0
@@ -354,8 +412,11 @@ def detection_rollout(learner, number_of_steps):
 while global_step < args.t_steps:
 	if global_step > 0 and global_step%args.switch == 0:
 		task_index += 1
+		environment_start_time = time.perf_counter()
 		env = CL_envs_func(args.env_name, args.seed, task_index)
 		observation = env.reset()
+		environment_interaction_time += (
+				time.perf_counter() - environment_start_time)
 		avg_return = 0.0
 		episode_return = 0.0
 		fast_diagnostics.start_training_phase()
@@ -365,11 +426,17 @@ while global_step < args.t_steps:
 		last_bc_loss = None
 
 		fast_returns = detection_rollout(Fast_Learner, args.detection_step)
+		environment_start_time = time.perf_counter()
 		observation = env.reset()
+		environment_interaction_time += (
+				time.perf_counter() - environment_start_time)
 		meta_returns = detection_rollout(Meta_Learner, args.detection_step)
 		random_returns = []
 		if args.reset:
+			environment_start_time = time.perf_counter()
 			observation = env.reset()
+			environment_interaction_time += (
+					time.perf_counter() - environment_start_time)
 			random_returns = detection_rollout(
 					Random_Learner, args.detection_step)
 		mean_fast = np.mean(fast_returns) if fast_returns else -1000.0
@@ -399,7 +466,10 @@ while global_step < args.t_steps:
 		if args.reset:
 			# Keep an independent, untouched candidate for the next task switch.
 			Random_Learner = CNN(in_channels, num_actions).to(device)
+		environment_start_time = time.perf_counter()
 		observation = env.reset()
+		environment_interaction_time += (
+				time.perf_counter() - environment_start_time)
 		pending_metrics.update({"mle/detection_fast_return": mean_fast,
 				"mle/detection_meta_return": mean_meta,
 				"mle/detection_random_return": mean_random,
@@ -409,38 +479,58 @@ while global_step < args.t_steps:
 		if global_step >= args.t_steps:
 			break
 
+	environment_start_time = time.perf_counter()
 	action = behavior_action(observation)
 	next_observation, reward, done, _ = env.step(action)
+	environment_interaction_time += time.perf_counter() - environment_start_time
 	episode_return += reward
 	fast_replay.store(observation, action, next_observation, reward, done)
 	stage_step = global_step % args.switch
 	if stage_step >= args.switch - args.size_fast2meta:
+		meta_experience_start_time = time.perf_counter()
 		fast2meta_replay.store(observation, action)
+		meta_experience_time += (
+				time.perf_counter() - meta_experience_start_time)
 
 	if fast_replay.size() >= args.batch_size:
 		regularizer = Meta_Learner if (meta_warmup and
 				stage_step < args.warmstep and args.lambda_reg > 0) else None
+		synchronize_device()
+		gradient_start_time = time.perf_counter()
 		last_total_loss, last_td_loss, last_bc_loss = train_fast(regularizer)
+		synchronize_device()
+		gradient_update_time += time.perf_counter() - gradient_start_time
 
 	observation = next_observation
 	if done:
+		environment_start_time = time.perf_counter()
 		observation = env.reset()
+		environment_interaction_time += (
+				time.perf_counter() - environment_start_time)
 		avg_return = 0.99 * avg_return + 0.01 * episode_return
 		episode_return = 0.0
 
 	stage_ending = (global_step+1) % args.switch == 0
 	meta_loss = None
 	if stage_ending:
+		synchronize_device()
+		meta_experience_start_time = time.perf_counter()
 		meta_optimizer = optim.Adam(Meta_Learner.parameters(), lr=args.lr1)
 		meta_scheduler = ExponentialLR(meta_optimizer, gamma=0.95)
 		meta_loss = train_meta(task_index)
+		synchronize_device()
+		meta_experience_time += (
+				time.perf_counter() - meta_experience_start_time)
 	record_step(global_step, {"loss/meta_mle": meta_loss}
 			if meta_loss is not None else None)
 	global_step += 1
 
 	if stage_ending:
+		meta_experience_start_time = time.perf_counter()
 		fast2meta_replay.copy_to(meta_replay)
 		fast2meta_replay.clear()
+		meta_experience_time += (
+				time.perf_counter() - meta_experience_start_time)
 		fast_replay.delete()
 		if args.save_model:
 			os.makedirs("models", exist_ok=True)
@@ -462,4 +552,11 @@ if args.save:
 		pickle.dump(returns_array, output)
 
 print("DQN w/ MLE initialization choices:", stage_choices)
+synchronize_device()
+total_wall_clock_time = time.perf_counter() - program_start_time
+print("Wall-clock time (seconds): "
+		f"environment interaction={environment_interaction_time:.6f}, "
+		f"gradient updates={gradient_update_time:.6f}, "
+		f"meta experience={meta_experience_time:.6f}, "
+		f"total={total_wall_clock_time:.6f}", flush=True)
 wandb.finish()

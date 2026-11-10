@@ -197,9 +197,6 @@ class Theorem1Analyzer:
 				reference.discounted_return,
 			"theorem1/data/historical_gaps": self.gap_table,
 			"theorem1/data/historical_gap_ecdf": self.ecdf_table,
-			"theorem1/plots/historical_gap_ecdf": wandb.plot.line(
-				self.ecdf_table, "delta", "empirical_cdf", stroke="game",
-				title="Historical Action Gap Empirical CDF"),
 		}
 
 	def _evaluate_reference(self, net, game, step):
@@ -256,13 +253,6 @@ class Theorem1Analyzer:
 			"theorem1/data/summary": self.summary_table,
 			f"theorem1/data/bound/{game}": self.bound_tables[game],
 			f"theorem1/data/tightness/{game}": self.tightness_tables[game],
-			f"theorem1/plots/bound/{game}": wandb.plot.line(
-				self.bound_tables[game], "delta", "empirical_bound",
-				stroke="evaluation",
-				title=f"Empirical Upper-Bound Evolution: {game}"),
-			f"theorem1/plots/tightness/{game}": wandb.plot.line(
-				self.tightness_tables[game], "step", "value", stroke="metric",
-				title=f"Empirical Bound Tightness: {game}"),
 		}
 		if finite_delta_star is not None:
 			metrics[f"{prefix}/delta_star"] = finite_delta_star

@@ -23,7 +23,7 @@ for seed in "${seeds[@]}"; do
 		--t-steps "$t_steps" \
 		--batch-size "$batch_size" \
 		--lr1 3e-3 \
-		--aperture-size 7 \
+		--aperture-size 9 \
 		--reward-period 500000 \
 		--replay-size 1000 \
 		--minimum-replay-history 50 \

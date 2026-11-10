@@ -5,8 +5,8 @@ set -uo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-gpu=3
-seeds=(20 36 52)
+gpu=0
+seeds=(16 32 48)
 t_steps=10000000
 batch_size=32
 consolidation_period=50000
@@ -22,7 +22,7 @@ for seed in "${seeds[@]}"; do
 		--seed "$seed" \
 		--t-steps "$t_steps" \
 		--batch-size "$batch_size" \
-		--aperture-size 7 \
+		--aperture-size 9 \
 		--reward-period 500000 \
 		--replay-size 1000 \
 		--minimum-replay-history 50 \
@@ -32,6 +32,7 @@ for seed in "${seeds[@]}"; do
 		--ewc-lambda 17.5 \
 		--ewc-gamma 0.95 \
 		--fisher-batches 100 \
+		--wandb-mode offline \
 		--consolidation-period "$consolidation_period" \
 		--save >"logs/${label}.log" 2>&1 &
 	pids+=("$!")

@@ -7,7 +7,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
 seeds=(16 32 48)
-gpu="${1:-0}"
+gpu="${1:-1}"
 t_steps=$(python -c 'from CL_envs_fixed import NUM_TASK_STAGES; print(NUM_TASK_STAGES * 1_000_000)')
 switch_steps=1000000
 batch_size=64
@@ -19,7 +19,7 @@ labels=()
 for seed in "${seeds[@]}"; do
 	label="DQN_mle_seed_${seed}_gpu_${gpu}"
 	echo "Launching DQN w/ MLE, seed=${seed}, GPU=${gpu}"
-	CUDA_VISIBLE_DEVICES="$gpu" python DQN_mle.py \
+	WANDB_MODE=offline CUDA_VISIBLE_DEVICES="$gpu" python DQN_mle.py \
 		--env-name all \
 		--seed "$seed" \
 		--t-steps "$t_steps" \
