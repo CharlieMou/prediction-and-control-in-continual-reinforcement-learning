@@ -1,4 +1,4 @@
-"""Empirical diagnostics for the GAC return-discrepancy bound."""
+"""Empirical diagnostics for GAC behavioral-forgetting and return bounds."""
 
 from dataclasses import dataclass
 
@@ -295,3 +295,124 @@ class Theorem1Analyzer:
 			if was_training:
 				net.train()
 		return metrics
+
+
+class AuxiliaryMemoryBoundAnalyzer:
+	"""Evaluate the empirical forgetting bound on the GAC memory mixture."""
+
+	def __init__(self, rho, device, evaluation_start=3000000,
+			evaluation_interval=1000000, threshold_count=256,
+			q_batch_size=1024):
+		self.rho = rho
+		self.device = device
+		self.evaluation_start = evaluation_start
+		self.evaluation_interval = evaluation_interval
+		self.threshold_count = threshold_count
+		self.q_batch_size = q_batch_size
+		wandb.config.update({
+			"empirical_bound_distribution": "uniform_gac_auxiliary_memory",
+			"empirical_bound_evaluation_start": evaluation_start,
+			"empirical_bound_evaluation_interval": evaluation_interval,
+			"empirical_bound_threshold_count": threshold_count,
+		})
+
+		self.gap_table = wandb.Table(columns=[
+			"step", "state_index", "historical_gap",
+		], log_mode="INCREMENTAL")
+		self.bound_table = wandb.Table(columns=[
+			"step", "delta", "empirical_cdf", "regularizer",
+			"empirical_bound", "evaluation",
+		], log_mode="INCREMENTAL")
+		self.summary_table = wandb.Table(columns=[
+			"step", "memory_size", "regularizer", "behavioral_forgetting",
+			"bound_star", "delta_star", "delta_star_side", "bound_slack",
+		], log_mode="INCREMENTAL")
+
+	def _q_values(self, net, memory):
+		outputs = []
+		for start in range(0, len(memory), self.q_batch_size):
+			batch = torch.stack([
+				state for state, _, _ in
+				memory[start:start + self.q_batch_size]
+			]).to(self.device)
+			outputs.append(net(batch).cpu().numpy())
+		return np.concatenate(outputs)
+
+	@torch.no_grad()
+	def update(self, step, net, auxiliary_memory):
+		"""Evaluate Lemma D.1.1 under the current empirical memory measure."""
+		should_evaluate = (
+			step >= self.evaluation_start
+			and (step - self.evaluation_start) % self.evaluation_interval == 0)
+		if not should_evaluate or auxiliary_memory.size() == 0:
+			return {}
+
+		was_training = net.training
+		net.eval()
+		try:
+			memory = auxiliary_memory.memory
+			q_values = self._q_values(net, memory)
+			actions = torch.stack([
+				action for _, action, _ in memory
+			]).view(-1).numpy()
+			gaps = torch.stack([
+				gap for _, _, gap in memory
+			]).view(-1).numpy()
+
+			rows = np.arange(len(memory))
+			competitors = q_values.copy()
+			competitors[rows, actions] = -np.inf
+			continual_gaps = (
+				q_values[rows, actions] - competitors.max(axis=1))
+			violations = np.maximum(
+				self.rho * gaps - continual_gaps, 0.0)
+			regularizer = float(violations.mean())
+			forgetting = float((q_values.argmax(axis=1) != actions).mean())
+			bound_star, delta_star, delta_side = empirical_bound_infimum(
+				gaps, regularizer, self.rho)
+
+			positive = gaps[gaps > 0]
+			if positive.size:
+				lower = max(float(positive.min()) / 10, 1e-12)
+				upper = max(float(positive.max()) * 10, lower * 10)
+			else:
+				lower, upper = 1e-8, 1.0
+			deltas = np.geomspace(lower, upper, self.threshold_count)
+			sorted_gaps = np.sort(gaps)
+			ecdf = np.searchsorted(
+				sorted_gaps, deltas, side="right") / len(gaps)
+			bounds = ecdf + regularizer / (self.rho * deltas) \
+				if self.rho > 0 else np.full_like(deltas, np.nan)
+			finite_delta_star = delta_star \
+				if np.isfinite(delta_star) else None
+			bound_slack = bound_star - forgetting
+
+			for index, gap in enumerate(gaps):
+				self.gap_table.add_data(step, index, float(gap))
+			for delta, probability, bound in zip(deltas, ecdf, bounds):
+				self.bound_table.add_data(
+					step, float(delta), float(probability), regularizer,
+					float(bound), str(step))
+			self.summary_table.add_data(
+				step, len(memory), regularizer, forgetting, bound_star,
+				finite_delta_star, delta_side, bound_slack)
+
+			prefix = "theorem1/memory"
+			metrics = {
+				f"{prefix}/regularizer": regularizer,
+				f"{prefix}/behavioral_forgetting": forgetting,
+				f"{prefix}/bound_star": bound_star,
+				f"{prefix}/bound_slack": bound_slack,
+				f"{prefix}/delta_star_at_infinity":
+					float(delta_side == "infinity"),
+				f"{prefix}/memory_size": len(memory),
+				"theorem1/data/memory_gaps": self.gap_table,
+				"theorem1/data/memory_bound": self.bound_table,
+				"theorem1/data/memory_summary": self.summary_table,
+			}
+			if finite_delta_star is not None:
+				metrics[f"{prefix}/delta_star"] = finite_delta_star
+			return metrics
+		finally:
+			if was_training:
+				net.train()

@@ -14,7 +14,7 @@ from model import *
 from replay import *
 from CL_envs_fixed import *
 from diagnostics import ContinualDiagnostics
-from gac_analysis_tools import Theorem1Analyzer
+from gac_analysis_tools import AuxiliaryMemoryBoundAnalyzer
 
 from argparse import ArgumentParser
 from configparser import ConfigParser
@@ -280,9 +280,10 @@ retrospective_revaluation = RetrospectiveRevaluation(
 		args.revaluation_size, args.batch_size, device)
 diagnostics = ContinualDiagnostics(args.seed, gamma, args.eval_episodes,
 		args.eval_max_steps, args.eval_epsilon)
-theorem1_analysis = Theorem1Analyzer(
-		args.seed, gamma, args.rho, device, TASK_SEQUENCE, args.switch,
-		args.eval_max_steps)
+theorem1_analysis = AuxiliaryMemoryBoundAnalyzer(
+		args.rho, device,
+		evaluation_start=len(set(TASK_SEQUENCE)) * args.switch,
+		evaluation_interval=args.switch)
 
 returns_array = np.zeros(args.t_steps)
 
@@ -339,7 +340,7 @@ for step in range(args.t_steps):
 			Net, exp_replay, device, env.game_name
 		))
 	wandb_metrics.update(theorem1_analysis.update(
-		step + 1, Net, env.game_name))
+		step + 1, Net, retrospective_revaluation))
 
 	if done:
 		environment_start_time = time.perf_counter()
