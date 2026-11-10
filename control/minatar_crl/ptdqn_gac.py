@@ -69,9 +69,14 @@ class RetrospectiveRevaluation:
 		return selected, final_size
 
 	def commit(self, selected, final_size):
-		self.memory.extend([None] * (final_size - len(self.memory)))
+		previous_size = len(self.memory)
+		new_decisions = []
 		for index, revalued_decision in selected.items():
-			self.memory[index] = revalued_decision
+			if index < previous_size:
+				self.memory[index] = revalued_decision
+			else:
+				new_decisions.append(revalued_decision)
+		self.memory.extend(new_decisions[:final_size - previous_size])
 
 	@staticmethod
 	def reservoir_sample(candidates, sample_size):
@@ -227,7 +232,6 @@ def revalue():
 		len(transitions))
 	reservoir_slots = list(reservoir_slots.items())
 	selected = {}
-	pending_slots = []
 
 	def evaluate(candidate_indices):
 		states = torch.stack([
@@ -257,49 +261,9 @@ def revalue():
 				batch, states, actions, margins, keep):
 			if accepted:
 				selected[slot] = (state.cpu(), action.cpu(), margin.cpu())
-			else:
-				pending_slots.append(slot)
-
-	if pending_slots:
-		used = {candidate_index for _, candidate_index in reservoir_slots}
-		remaining = [
-			index for index in range(len(transitions)) if index not in used
-		]
-		while pending_slots and remaining:
-			candidate_indices = retrospective_revaluation.reservoir_sample(
-				remaining, min(len(pending_slots), len(remaining)))
-			candidate_set = set(candidate_indices)
-			remaining = [
-				index for index in remaining if index not in candidate_set
-			]
-			for start in range(0, len(candidate_indices), args.batch_size):
-				batch = candidate_indices[start:start + args.batch_size]
-				states, actions, margins, keep = evaluate(batch)
-				for state, action, margin, accepted in zip(
-						states, actions, margins, keep):
-					if accepted:
-						slot = pending_slots.pop()
-						selected[slot] = (
-							state.cpu(), action.cpu(), margin.cpu())
-						if not pending_slots:
-							break
-				if not pending_slots:
-					break
-
-	if pending_slots:
-		# Fewer distinct aligned replay states than reservoir slots: repeated
-		# reservoir samples from known aligned states preserve the GAC batch size.
-		aligned_decisions = list(selected.values())
-		if not aligned_decisions:
-			raise RuntimeError("no replay state satisfies greedy action alignment")
-		while pending_slots:
-			indices = retrospective_revaluation.reservoir_sample(
-				range(len(aligned_decisions)),
-				min(len(pending_slots), len(aligned_decisions)))
-			for index in indices:
-				selected[pending_slots.pop()] = aligned_decisions[index]
 
 	retrospective_revaluation.commit(selected, final_size)
+	return len(selected)
 
 
 def get_action(c_obs):
@@ -422,7 +386,7 @@ for step in range(args.t_steps):
 	if (step+1)%args.switch == 0 and step+1 < args.t_steps:
 		synchronize_device()
 		auxiliary_memory_start_time = time.perf_counter()
-		revalue()
+		wandb_metrics["gac/greedy_actions_aligned"] = revalue()
 		synchronize_device()
 		auxiliary_memory_time += (
 			time.perf_counter() - auxiliary_memory_start_time)
